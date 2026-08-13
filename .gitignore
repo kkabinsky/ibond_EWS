@@ -1,0 +1,62 @@
+# ---- data: ThaiBMA material, never committed --------------------------------
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+tex_out/
+data/*.csv
+data/*.xlsx
+gaf_outputs/
+output/
+cache/
+cachedir/
+
+# ---- credentials -------------------------------------------------------------
+# credentials are read from environment variables only; these patterns exist so a
+# stray local file can never be committed by accident
+.env
+.env.*
+*credential*.json
+*secret*
+*token*
+!*_token_utils.py
+
+# ---- generated artefacts -----------------------------------------------------
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.pptx
+*.xlsx
+*.csv
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+
+# ---- python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# ---- editors and os ----------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ---- local backups -----------------------------------------------------------
+*.bak
+_codex_backup/
+tmp/
