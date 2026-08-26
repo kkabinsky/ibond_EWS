@@ -34,39 +34,68 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from thaibma_paths import DATA_ROOT  # data lives outside the repo
+import ibond_dataset as ds           # which panel: 1 = 293 issuers, 2 = 941 firms
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUTDIR = os.path.join(DATA_ROOT, "tex_out")
+OUTDIR = ds.OUTDIR
 os.makedirs(OUTDIR, exist_ok=True)
 
 SEED = 42
 N_BASE = 4000
 N_SHOCK = 700
 
-# moments taken from the winsorised iBond panel so the synthetic geometry is realistic
-MU = np.array([4.5128, 1.5249])          # ROE, DE
-SD = np.array([17.2001, 1.3998])
-RHO = -0.2737
-
+# Moments are read from the winsorised panel that is actually selected, so the
+# synthetic geometry follows the dataset rather than a set of constants frozen from
+# one of them. The figure for dataset 2 is then a picture of dataset 2's cloud, not
+# of dataset 1's cloud under a different heading.
+WINSOR = (0.01, 0.99)
 DE_AMBER, DE_RED = 1.606, 2.116
-ROE_P10_SHIFT = -22.0820                 # ROE median -> 10th percentile
 
-SHOCKS = {
-    "DE to red": np.array([0.0, DE_RED - 1.1837]),        # median DE 1.1837
-    "ROE to p10": np.array([ROE_P10_SHIFT, 0.0]),
-    "both adverse": np.array([ROE_P10_SHIFT, DE_RED - 1.1837]),
-}
+
+def panel_moments():
+    """(mean, sd, correlation, median DE, ROE p10 shift) of winsorised ROE and DE."""
+    import sqlite3
+    import pandas as pd
+    ds.require_db()
+    con = sqlite3.connect(ds.READ_DB)
+    d = pd.read_sql(f"SELECT ROE, DE FROM {ds.TABLE}", con)
+    con.close()
+    d = d.apply(pd.to_numeric, errors="coerce").dropna()
+    for c in d.columns:
+        lo, hi = d[c].quantile(WINSOR)
+        d[c] = d[c].clip(lo, hi)
+    mu = d.mean().to_numpy(float)
+    sd = d.std(ddof=1).to_numpy(float)
+    rho = float(d.corr().iloc[0, 1])
+    de_med = float(d["DE"].median())
+    roe_shift = float(d["ROE"].quantile(0.10) - d["ROE"].median())
+    return mu, sd, rho, de_med, roe_shift
+
+
+def shock_vectors(de_median, roe_p10_shift):
+    """The three adverse moves, expressed in the determinants' own units."""
+    return {
+        "DE to red": np.array([0.0, DE_RED - de_median]),
+        "ROE to p10": np.array([roe_p10_shift, 0.0]),
+        "both adverse": np.array([roe_p10_shift, DE_RED - de_median]),
+    }
 COLORS = {"DE to red": "#d97706", "ROE to p10": "#2563eb",
           "both adverse": "#b91c1c"}
 BETAS = [(1, 1), (3, 4), (5, 1)]
 
 
 def simulate():
+    """Draw the synthetic cloud from the selected panel's moments.
+
+    The database is opened here rather than at import time, so importing this
+    module still works on a machine that has no data yet.
+    """
+    mu, sd, rho, de_median, roe_p10_shift = panel_moments()
     rng = np.random.default_rng(SEED)
-    corr = np.array([[1.0, RHO], [RHO, 1.0]])
-    cov = np.outer(SD, SD) * corr
-    X = rng.multivariate_normal(MU, cov, size=N_BASE)
-    return X, rng
+    corr = np.array([[1.0, rho], [rho, 1.0]])
+    cov = np.outer(sd, sd) * corr
+    X = rng.multivariate_normal(mu, cov, size=N_BASE)
+    return X, rng, shock_vectors(de_median, roe_p10_shift)
 
 
 def basis_from(X):
@@ -94,7 +123,7 @@ def main():
     print("=" * 90)
     print("Synthetic simulation: feature shock seen in PCA coordinates")
     print("=" * 90)
-    X, rng = simulate()
+    X, rng, SHOCKS = simulate()
     mu, sd, lam, V = basis_from(X)
     print(f"  baseline n = {N_BASE:,}   shocked cohort n = {N_SHOCK:,} each")
     print(f"  eigenvalues  PC1 {lam[0]:.4f} ({100*lam[0]/lam.sum():.1f}%)   "

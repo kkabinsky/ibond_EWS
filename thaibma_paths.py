@@ -26,7 +26,11 @@ NOTHING NEEDS CONFIGURING
     1. ``THAIBMA_DATA`` -- optional, only for an unusual layout
     2. the repository folder itself
     3. each parent folder above it, up to eight levels, looking for cmdf_credit.db
-    4. a ``data`` folder beside or above the repository
+    4. a ``data`` or ``datasets_bond`` folder beside or above the repository
+
+    Which PANEL is read is a separate question, answered by ibond_dataset.py: the
+    293-issuer panel lives in cmdf_credit.db, the 941-firm panel in lime_credit.db,
+    and results from both are written back here.
 
     If none of them holds the database, DATA_ROOT still resolves to a sensible
     writable folder and DB simply points at a file that does not exist yet. Code that
@@ -62,6 +66,7 @@ def _candidates():
     for _ in range(8):                       # the repo, then upwards
         yield d
         yield os.path.join(d, "data")
+        yield os.path.join(d, "datasets_bond")
         parent = os.path.dirname(d)
         if parent == d:
             break

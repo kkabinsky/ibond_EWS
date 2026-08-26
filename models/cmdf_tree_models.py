@@ -49,9 +49,11 @@ warnings.filterwarnings("ignore")
 
 import cmdf_gbm_compare as base          # data loading, sample building, features
 from thaibma_paths import DATA_ROOT  # data lives outside the repo
+import ibond_dataset as ds
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUTDIR = os.path.join(DATA_ROOT, "tex_out")
+OUTDIR = ds.OUTDIR
+RESULT_DB = ds.RESULT_DB
 DB = base.DB
 TARGET = base.TARGET
 PRETTY = base.PRETTY
@@ -60,7 +62,8 @@ os.makedirs(OUTDIR, exist_ok=True)
 
 
 def out(name):
-    return os.path.join(OUTDIR, name)
+    """Resolved on every call, so switching dataset mid-process redirects output."""
+    return ds.out(name)
 
 
 # tree models only -- Ridge is kept out of the figures but reported as the linear

@@ -50,6 +50,8 @@ warnings.filterwarnings("ignore")
 
 import cmdf_tree_classify as cl
 import cmdf_tree_models as tm
+import ibond_dataset as ds
+import make_importance_default as mid
 
 OUTDIR = tm.OUTDIR
 DB = tm.DB
@@ -65,12 +67,14 @@ def esc(s):
     return str(s).replace("&", r"\&").replace("%", r"\%").replace("_", r"\_")
 
 
-def ranked_features(cols):
-    """Mean gain across the four tree models, restricted to determinants present."""
-    p = out("importance_default_event.csv")
-    if not os.path.exists(p):
-        raise SystemExit("run make_importance_default.py first")
-    imp = pd.read_csv(p)
+def ranked_features(cols, panel=None, X=None, y=None):
+    """Mean gain across the four tree models, restricted to determinants present.
+
+    The importance table is built on demand when it is missing, so this module no
+    longer fails on a fresh checkout with an error telling the reader to run
+    another program first.
+    """
+    imp = pd.read_csv(mid.ensure_csv(panel, X, y, cols))
     r = imp.groupby("feature")["gain"].mean().sort_values(ascending=False)
     return [f for f in r.index if f in cols], r
 
@@ -110,7 +114,7 @@ def main():
     yv = y.to_numpy(int)
     sd = A.std(0, ddof=1)
 
-    order, gains = ranked_features(cols)
+    order, gains = ranked_features(cols, panel, X, y)
     idx = {c: i for i, c in enumerate(cols)}
     chosen = order[:top]
     print(f"\n  determinants shocked (top {top} by mean gain):")
@@ -214,8 +218,8 @@ def main():
     plt.close(fig)
 
     d.to_csv(out("pairwise_shock_pd.csv"), index=False)
-    con = sqlite3.connect(DB)
-    d.to_sql("cmdf_pairwise_shock", con, if_exists="replace", index=False)
+    con = sqlite3.connect(ds.RESULT_DB)
+    d.to_sql(ds.tname("cmdf_pairwise_shock"), con, if_exists="replace", index=False)
     con.commit(); con.close()
     print(f"\n  wrote {p}")
     print("  wrote tex_out/pairwise_shock_pd.csv, table cmdf_pairwise_shock")

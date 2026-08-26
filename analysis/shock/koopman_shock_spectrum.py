@@ -58,6 +58,8 @@ warnings.filterwarnings("ignore")
 
 import cmdf_tree_classify as cl
 import cmdf_tree_models as tm
+import ibond_dataset as ds
+import make_importance_default as mid
 
 OUTDIR = tm.OUTDIR
 DB = tm.DB
@@ -143,7 +145,7 @@ def main():
     mu = A.mean(0)
     As = (A - mu) / np.where(sd > 0, sd, 1.0)      # standardise once
 
-    imp = pd.read_csv(out("importance_default_event.csv"))
+    imp = pd.read_csv(mid.ensure_csv(panel, X, y, cols))
     piv = imp.pivot_table(index="feature", columns="model", values="gain")
     order = piv.mean(1).sort_values(ascending=False)
     idx = {c: i for i, c in enumerate(cols)}
@@ -277,8 +279,8 @@ def main():
                            re_shock=b.real, im_shock=b.imag, mod_shock=abs(b)))
     pd.DataFrame(ev).to_csv(out("koopman_eigenvalues.csv"), index=False)
     res.to_csv(out("koopman_spectrum_summary.csv"), index=False)
-    con = sqlite3.connect(DB)
-    res.to_sql("cmdf_koopman_spectrum", con, if_exists="replace", index=False)
+    con = sqlite3.connect(ds.RESULT_DB)
+    res.to_sql(ds.tname("cmdf_koopman_spectrum"), con, if_exists="replace", index=False)
     con.commit(); con.close()
     print(f"\n  wrote {p}")
     print("  wrote tex_out/koopman_eigenvalues.csv, koopman_spectrum_summary.csv")

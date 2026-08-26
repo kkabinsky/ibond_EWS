@@ -35,6 +35,17 @@ cachedir/
 *.toc
 *.synctex.gz
 
+# ---- comparison results: these ARE committed -------------------------------
+# The dataset-1 vs dataset-2 shock comparison is the deliverable, so its figures
+# and tables have to survive the blanket *.jpg / *.csv / *.xlsx rules above.
+# Negation works here because results/ itself is not an excluded directory.
+!results/
+!results/**/*.jpg
+!results/**/*.png
+!results/**/*.csv
+!results/**/*.xlsx
+!results/**/*.md
+
 # ---- python ------------------------------------------------------------------
 __pycache__/
 *.py[cod]

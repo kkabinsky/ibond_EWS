@@ -51,6 +51,8 @@ warnings.filterwarnings("ignore")
 
 import cmdf_tree_classify as cl
 import cmdf_tree_models as tm
+import ibond_dataset as ds
+import make_importance_default as mid
 
 OUTDIR = tm.OUTDIR
 DB = tm.DB
@@ -77,7 +79,7 @@ def main():
     yv = y.to_numpy(int)
     sd = A.std(0, ddof=1)
 
-    imp = pd.read_csv(out("importance_default_event.csv"))
+    imp = pd.read_csv(mid.ensure_csv(panel, X, y, cols))
     gains = imp.groupby("feature")["gain"].mean().sort_values(ascending=False)
     idx = {c: i for i, c in enumerate(cols)}
     chosen = [f for f in gains.index if f in idx][:top]
@@ -287,8 +289,8 @@ def main():
     plt.close(fig)
 
     d.to_csv(out("triple_shock_pd.csv"), index=False)
-    con = sqlite3.connect(DB)
-    d.to_sql("cmdf_triple_shock", con, if_exists="replace", index=False)
+    con = sqlite3.connect(ds.RESULT_DB)
+    d.to_sql(ds.tname("cmdf_triple_shock"), con, if_exists="replace", index=False)
     con.commit(); con.close()
     print(f"  wrote {p}")
     print("  wrote tex_out/triple_shock_pd.csv, table cmdf_triple_shock")

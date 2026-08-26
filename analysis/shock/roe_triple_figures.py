@@ -44,6 +44,8 @@ warnings.filterwarnings("ignore")
 
 import cmdf_tree_classify as cl
 import cmdf_tree_models as tm
+import ibond_dataset as ds
+import make_importance_default as mid
 
 OUTDIR = tm.OUTDIR
 out = tm.out
@@ -75,7 +77,7 @@ def main():
     yv = y.to_numpy(int)
     sd = A.std(0, ddof=1)
 
-    imp = pd.read_csv(out("importance_default_event.csv"))
+    imp = pd.read_csv(mid.ensure_csv(panel, X, y, cols))
     gains = imp.groupby("feature")["gain"].mean().sort_values(ascending=False)
     idx = {c: i for i, c in enumerate(cols)}
     ranked = [f for f in gains.index if f in idx]

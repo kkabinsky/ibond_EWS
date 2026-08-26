@@ -43,6 +43,8 @@ warnings.filterwarnings("ignore")
 
 import cmdf_tree_classify as cl
 import cmdf_tree_models as tm
+import ibond_dataset as ds
+import make_importance_default as mid
 
 OUTDIR = tm.OUTDIR
 DB = tm.DB
@@ -88,7 +90,7 @@ def main():
     mu = A.mean(0)
     As = (A - mu) / np.where(sd > 0, sd, 1.0)
 
-    imp = pd.read_csv(out("importance_default_event.csv"))
+    imp = pd.read_csv(mid.ensure_csv(panel, X, y, cols))
     order = imp.groupby("feature")["gain"].mean().sort_values(ascending=False)
     idx = {c: i for i, c in enumerate(cols)}
     feats = [f for f in order.index if f in idx][:TOP_FEATURES]
@@ -194,8 +196,8 @@ def main():
     plt.close(fig)
 
     d.to_csv(out("knn_cluster_shock.csv"), index=False)
-    con = sqlite3.connect(DB)
-    d.to_sql("cmdf_knn_cluster_shock", con, if_exists="replace", index=False)
+    con = sqlite3.connect(ds.RESULT_DB)
+    d.to_sql(ds.tname("cmdf_knn_cluster_shock"), con, if_exists="replace", index=False)
     con.commit(); con.close()
     print(f"\n  wrote {p}")
     print("  wrote tex_out/knn_cluster_shock.csv")
