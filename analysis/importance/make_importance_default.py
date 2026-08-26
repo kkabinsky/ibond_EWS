@@ -472,6 +472,67 @@ def ensure_csv(panel=None, X=None, y=None, cols=None, verbose=True):
     return p
 
 
+PERM_CSV = "importance_default_perm.csv"
+GAIN, PERM = "gain", "perm"
+
+
+def rank_source_from_argv(default=PERM):
+    """Read --rank perm|gain, and remove it from sys.argv."""
+    if "--rank" in sys.argv:
+        i = sys.argv.index("--rank")
+        if i + 1 >= len(sys.argv):
+            raise SystemExit("--rank expects 'perm' or 'gain'")
+        v = sys.argv[i + 1].strip().lower()
+        del sys.argv[i:i + 2]
+        if v not in (GAIN, PERM):
+            raise SystemExit(f"--rank expects 'perm' or 'gain', got {v!r}")
+        return v
+    return default
+
+
+def ranking(cols, panel=None, X=None, y=None, source=PERM, verbose=True):
+    """Determinants ordered by importance, out-of-sample first.
+
+    WHY NOT GAIN
+        Every shock figure picks which determinants to move by reading this
+        ranking, and every one of them used the ``gain`` column. This module's own
+        documentation calls gain "the least trustworthy of the three": it is
+        measured in-sample, on a panel with 32 positive months from 8 issuers, and
+        it reports what the trees happened to split on rather than what carries
+        information about the event.
+
+        The permutation column is measured leave-one-issuer-out, so a determinant
+        scores only if shuffling it in rows the model never saw actually costs AUC.
+        That is the question a shock analysis needs answered before it decides
+        what is worth shocking.
+
+    Falls back to gain when the permutation pass has not been run, and says so,
+    rather than silently ranking on the weaker measure.
+
+    Returns (ordered determinants, the score series, a label naming the measure).
+    """
+    p = out(PERM_CSV)
+    if source == PERM and os.path.exists(p):
+        d = pd.read_csv(p)
+        if "auc_drop" in d.columns and d["auc_drop"].notna().any():
+            r = (d.groupby("feature")["auc_drop"].mean()
+                 .sort_values(ascending=False))
+            label = "out-of-sample permutation AUC drop (leave-one-issuer-out)"
+            order = [f for f in r.index if f in cols]
+            if verbose:
+                print(f"  ranked by {label}")
+            return order, r, label
+    d = pd.read_csv(ensure_csv(panel, X, y, cols, verbose=verbose))
+    r = d.groupby("feature")["gain"].mean().sort_values(ascending=False)
+    label = "in-sample gain"
+    if verbose:
+        why = ("as requested" if source == GAIN else
+               f"because {PERM_CSV} is missing -- run make_importance_default.py "
+               f"without --no-perm to rank out-of-sample instead")
+        print(f"  ranked by {label}, {why}")
+    return [f for f in r.index if f in cols], r, label
+
+
 def main():
     print("=" * 96)
     print("Feature importance against the real default event, every tree model")

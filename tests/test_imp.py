@@ -2,7 +2,37 @@ import sqlite3
 import pandas as pd
 import numpy as np
 
-conn = sqlite3.connect('cmdf_credit.db')
+import os
+import unittest
+
+from thaibma_paths import DB as _DB   # resolve the database from anywhere, not the cwd
+
+
+def _require_table(name, hint):
+    """Skip rather than error when an operational table was never produced.
+
+    These tables come from the live iBond pipeline, which needs ThaiBMA
+    credentials. They are deliberately not shipped, so their absence is an unmet
+    prerequisite and not a failure; erroring on import made the whole suite look
+    broken on a clean checkout.
+    """
+    import sqlite3
+    if not os.path.exists(_DB):
+        raise unittest.SkipTest(f"{os.path.basename(_DB)} not present")
+    con = sqlite3.connect(_DB)
+    try:
+        found = con.execute(
+            "SELECT count(1) FROM sqlite_master WHERE name=?", (name,)).fetchone()[0]
+    finally:
+        con.close()
+    if not found:
+        raise unittest.SkipTest(f"{name} not built - {hint}")
+
+
+_require_table("bond_ews_panel",
+                "run the iBond Approach-1 pipeline (needs THAIBMA_USER/PASS)")
+
+conn = sqlite3.connect(_DB)
 b_panel = pd.read_sql_query('SELECT * FROM bond_ews_panel', conn)
 b_panel['clean_id'] = b_panel['issuer_code'].astype(str).str.strip()
 

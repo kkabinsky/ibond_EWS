@@ -2819,10 +2819,29 @@ def main(page):
     def on_bond(_):
         status.value = "Loading bond database & building SQLite Database View (v_ibond_33features_panel)..."; page.update()
         try:
-            import build_ibond_33features as b33
-            b33.build_ibond_33features(verbose=False)
-            import build_firm_mapping_and_view as bmv
-            bmv.build_mapping_and_view(verbose=False)
+            # Rebuilding the panel is a REFRESH, not a precondition. It reads
+            # bond_ews_panel, an operational table produced by the iBond download
+            # and Approach-1 run, and that table is not shipped with the code. When
+            # it is absent the rebuild raised, the whole handler fell into the
+            # except branch, and the button reported an error even though the panel
+            # and the view were sitting in the database ready to use.
+            notes = []
+            try:
+                import build_ibond_33features as b33
+                b33.build_ibond_33features(verbose=False)
+            except Exception as ex:
+                notes.append(f"panel not refreshed ({ex})")
+            try:
+                import build_firm_mapping_and_view as bmv
+                bmv.build_mapping_and_view(verbose=False)
+            except Exception as ex:
+                notes.append(f"view not rebuilt ({ex})")
+
+            if "v_ibond_33features_panel" not in db_list_tables():
+                raise RuntimeError(
+                    "v_ibond_33features_panel is missing and could not be built. "
+                    "Run: python run.py build_firm_mapping_and_view"
+                    + (" | " + "; ".join(notes) if notes else ""))
 
             # Add v_ibond_33features_panel to dropdown options if not present
             tables_avail = db_list_tables()
@@ -2840,7 +2859,10 @@ def main(page):
 
             data_info.value = "View: 'v_ibond_33features_panel' — Mapped Bond Symbol (รหัสหุ้นกู้) & Company Name (ชื่อบริษัท) with 33 Features"
             data_info.color = C.GREEN_800
-            status.value = "Loaded `v_ibond_33features_panel` Database View into DataGridView Inspector."; page.update()
+            status.value = ("Loaded `v_ibond_33features_panel` Database View into "
+                            "DataGridView Inspector."
+                            + (f"  Note: {'; '.join(notes)}" if notes else ""))
+            page.update()
         except Exception as e:
             status.value = f"Error loading bond database view: {e}"; page.update()
 

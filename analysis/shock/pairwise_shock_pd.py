@@ -51,6 +51,7 @@ warnings.filterwarnings("ignore")
 import cmdf_tree_classify as cl
 import cmdf_tree_models as tm
 import ibond_dataset as ds
+import shock_direction as sdir
 import make_importance_default as mid
 
 OUTDIR = tm.OUTDIR
@@ -59,6 +60,8 @@ out = tm.out
 
 TOP = 8
 SHOCK_SD = 1.0
+SOURCE = sdir.source_from_argv()
+RANK = mid.rank_source_from_argv()
 WORKLOAD = 0.02
 SEED = 42
 
@@ -74,9 +77,8 @@ def ranked_features(cols, panel=None, X=None, y=None):
     longer fails on a fresh checkout with an error telling the reader to run
     another program first.
     """
-    imp = pd.read_csv(mid.ensure_csv(panel, X, y, cols))
-    r = imp.groupby("feature")["gain"].mean().sort_values(ascending=False)
-    return [f for f in r.index if f in cols], r
+    order, r, _ = mid.ranking(cols, panel, X, y, RANK)
+    return order, r
 
 
 def fit_models(A, y):
@@ -123,37 +125,47 @@ def main():
 
     sc, models = fit_models(A, yv)
 
-    # adverse direction from the logistic coefficients: +1 if raising the determinant
-    # raises PD, -1 otherwise. Coefficients are on the standardised scale.
-    beta = models["Logistic"].coef_[0]
-    direction = {f: (1.0 if beta[idx[f]] >= 0 else -1.0) for f in chosen}
-    print("\n  adverse direction inferred from the fitted logistic coefficients:")
+    # This module is the one place where BOTH models are reported, so each gets the
+    # direction that is adverse under its own surface. Sharing one direction between
+    # them is what made the CatBoost column come out negative: it was being moved
+    # the way the logistic thought was adverse.
+    dtab = sdir.table(panel, X, y, cols, verbose=False)
+    direction = {
+        "Logistic": sdir.directions(cols, sdir.LOGISTIC, panel, X, y),
+        "CatBoost": sdir.directions(cols, SOURCE, panel, X, y),
+    }
+    print(f"\n  {sdir.describe(SOURCE)}")
+    dis = dtab.loc[dtab["feature"].isin(chosen) & ~dtab["agree"], "feature"].tolist()
+    print(f"  the two models disagree on {len(dis)} of the {len(chosen)} shocked "
+          f"determinants" + (f": {', '.join(dis)}" if dis else ""))
+    print(f"\n  {'determinant':26s} {'Logistic':>12} {'CatBoost':>12}")
     for f in chosen:
-        arrow = "increase" if direction[f] > 0 else "decrease"
-        print(f"    {f:26s} beta {beta[idx[f]]:+.4f}  ->  adverse = {arrow}")
+        def arrow(m):
+            return "increase" if direction[m][f] > 0 else "decrease"
+        print(f"  {f:26s} {arrow('Logistic'):>12} {arrow('CatBoost'):>12}")
 
     base = {m: pd_of(models[m], sc, A) for m in models}
     thr = {m: np.quantile(base[m], 1 - WORKLOAD) for m in models}
     print("\n  baseline mean PD:  " +
           "   ".join(f"{m} {base[m].mean():.5f}" for m in models))
 
-    def shocked(feats):
+    def shocked(feats, model):
+        """The perturbation each model considers adverse, in that model's own terms."""
         B = A.copy()
         for f in feats:
             j = idx[f]
-            B[:, j] = B[:, j] + direction[f] * SHOCK_SD * sd[j]
+            B[:, j] = B[:, j] + direction[model][f] * SHOCK_SD * sd[j]
         return B
 
     single = {}
     for f in chosen:
-        Bf = shocked([f])
-        single[f] = {m: pd_of(models[m], sc, Bf) - base[m] for m in models}
+        single[f] = {m: pd_of(models[m], sc, shocked([f], m)) - base[m]
+                     for m in models}
 
     rows = []
     for f1, f2 in itertools.combinations(chosen, 2):
-        Bj = shocked([f1, f2])
         for m in models:
-            joint = pd_of(models[m], sc, Bj) - base[m]
+            joint = pd_of(models[m], sc, shocked([f1, f2], m)) - base[m]
             d1 = single[f1][m].mean()
             d2 = single[f2][m].mean()
             alarm0 = (base[m] >= thr[m]).mean()

@@ -52,6 +52,7 @@ warnings.filterwarnings("ignore")
 import cmdf_tree_classify as cl
 import cmdf_tree_models as tm
 import ibond_dataset as ds
+import shock_direction as sdir
 import make_importance_default as mid
 
 OUTDIR = tm.OUTDIR
@@ -60,6 +61,8 @@ out = tm.out
 
 TOP = 10
 SHOCK_SD = 1.0
+SOURCE = sdir.source_from_argv()
+RANK = mid.rank_source_from_argv()
 WORKLOAD = 0.02
 SEED = 42
 GRID = 26
@@ -79,10 +82,9 @@ def main():
     yv = y.to_numpy(int)
     sd = A.std(0, ddof=1)
 
-    imp = pd.read_csv(mid.ensure_csv(panel, X, y, cols))
-    gains = imp.groupby("feature")["gain"].mean().sort_values(ascending=False)
     idx = {c: i for i, c in enumerate(cols)}
-    chosen = [f for f in gains.index if f in idx][:top]
+    order, gains, rank_label = mid.ranking(cols, panel, X, y, RANK)
+    chosen = order[:top]
     print(f"\n  determinants considered: {', '.join(chosen)}")
     print(f"  combinations: {len(list(itertools.combinations(chosen,3)))} triples, "
           f"{len(list(itertools.combinations(chosen,2)))} pairs, {top} singles")
@@ -99,8 +101,8 @@ def main():
                             random_seed=SEED, verbose=0,
                             allow_writing_files=False).fit(As, yv)
     models = {"Logistic": lg, "CatBoost": cb}
-    beta = lg.coef_[0]
-    direction = {f: (1.0 if beta[idx[f]] >= 0 else -1.0) for f in chosen}
+    direction = sdir.directions(cols, SOURCE, panel, X, y)
+    print(f"  {sdir.describe(SOURCE)}")
 
     def pd_of(m, B):
         return models[m].predict_proba(sc.transform(B))[:, 1]

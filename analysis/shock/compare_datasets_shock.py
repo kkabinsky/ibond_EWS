@@ -79,8 +79,11 @@ import cmdf_tree_classify as cl
 import cmdf_tree_models as tm
 import ibond_dataset as ds
 import make_importance_default as mid
+import shock_direction as sdir
 
 SHOCK_SD = 1.0
+SOURCE = sdir.source_from_argv()
+RANK = mid.rank_source_from_argv()
 SHOCK_TOP = 5              # how many determinants the adverse shock moves
 TOP_FEATURES = 11          # ROE plus ten partners, as roe_triple_figures uses
 GRID = 20
@@ -143,18 +146,14 @@ def prepare(choice, shock_feats=None):
     sd = A.std(0, ddof=1)
     idx = {c: i for i, c in enumerate(cols)}
 
-    imp = pd.read_csv(mid.ensure_csv(panel, X, y, cols))
-    gain = imp.groupby("feature")["gain"].mean().sort_values(ascending=False)
-    order = [f for f in gain.index if f in idx]
+    order, gain, rank_label = mid.ranking(cols, panel, X, y, RANK)
 
-    from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
     sc = StandardScaler().fit(A)
     As = sc.transform(A)
-    lg = LogisticRegression(max_iter=5000, C=0.1, class_weight="balanced").fit(As, yv)
-    beta = lg.coef_[0]
-    # adverse direction is read off the fitted coefficient, not assumed
-    direction = {c: (1.0 if beta[idx[c]] >= 0 else -1.0) for c in cols}
+    # adverse direction measured on the surface the effect is read off, shared with
+    # every other shock figure through the cached direction table
+    direction = sdir.directions(cols, SOURCE, panel, X, y)
 
     from catboost import CatBoostClassifier
     cb = CatBoostClassifier(iterations=300, depth=3, learning_rate=0.05,
@@ -177,6 +176,7 @@ def prepare(choice, shock_feats=None):
 
     return dict(choice=choice, info=ds.DATASETS[choice], panel=panel, cols=cols,
                 idx=idx, A=A, As=As, y=yv, sd=sd, gain=gain, order=order,
+                rank_label=rank_label,
                 own=own, matched=feats, direction=direction, sc=sc, pdf=pdf,
                 shocked=shocked, base_pd=pdf(A))
 
@@ -420,7 +420,7 @@ def main_figure(S, T_own, T_matched, triples, agree, grid, path):
     ax.set_yticks(yy)
     ax.set_yticklabels(feats, fontsize=7)
     ax.invert_yaxis()
-    ax.set_xlabel("mean gain across the four tree models", fontsize=8)
+    ax.set_xlabel(S[1]["rank_label"], fontsize=8)
     ax.set_title("D2. Determinant ranking behind every shock above\n"
                  "union of each panel's top ten", fontsize=9.5, fontweight="bold")
     ax.legend(fontsize=8)

@@ -44,6 +44,7 @@ warnings.filterwarnings("ignore")
 import cmdf_tree_classify as cl
 import cmdf_tree_models as tm
 import ibond_dataset as ds
+import shock_direction as sdir
 import make_importance_default as mid
 
 OUTDIR = tm.OUTDIR
@@ -54,6 +55,8 @@ N_PAIRS = 40
 N_CLUSTERS = 4
 TOP_FEATURES = 10          # C(10,2) = 45 pairs, the first N_PAIRS are drawn
 SHOCK_SD = 1.0
+SOURCE = sdir.source_from_argv()
+RANK = mid.rank_source_from_argv()
 SHOCK_TOP = 5
 SUBSAMPLE = 1200
 KNN_K = 15
@@ -90,21 +93,21 @@ def main():
     mu = A.mean(0)
     As = (A - mu) / np.where(sd > 0, sd, 1.0)
 
-    imp = pd.read_csv(mid.ensure_csv(panel, X, y, cols))
-    order = imp.groupby("feature")["gain"].mean().sort_values(ascending=False)
     idx = {c: i for i, c in enumerate(cols)}
-    feats = [f for f in order.index if f in idx][:TOP_FEATURES]
-    shocked_feats = [f for f in order.index if f in idx][:SHOCK_TOP]
+    order, scores, rank_label = mid.ranking(cols, panel, X, y, RANK)
+    feats = order[:TOP_FEATURES]
+    shocked_feats = order[:SHOCK_TOP]
     print(f"\n  determinants plotted : {', '.join(feats)}")
     print(f"  determinants shocked : {', '.join(shocked_feats)}")
 
-    from sklearn.linear_model import LogisticRegression
-    beta = LogisticRegression(max_iter=5000, C=0.1, class_weight="balanced") \
-        .fit(As, y.to_numpy(int)).coef_[0]
+    # one shared direction table, so this figure displaces the cloud the same way
+    # every other shock figure does
+    direction = sdir.directions(cols, SOURCE, panel, X, y)
+    print(f"  {sdir.describe(SOURCE)}")
     Ash = As.copy()
     for f in shocked_feats:
         j = idx[f]
-        Ash[:, j] += np.sign(beta[j] if beta[j] != 0 else 1.0) * SHOCK_SD
+        Ash[:, j] += direction[f] * SHOCK_SD
 
     from sklearn.cluster import KMeans
     km = KMeans(n_clusters=k_clusters, n_init=10, random_state=SEED).fit(As)
