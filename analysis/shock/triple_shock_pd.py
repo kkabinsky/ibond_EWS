@@ -184,7 +184,9 @@ def main():
         "item": ["panel", "issuer-months", "issuers", "events", "prevalence",
                  "shock size", "adverse direction", "workload for alarm rate",
                  "surface model", "horizon", "decomposition", "caveat"],
-        "value": ["ibond_33features_panel", f"{len(A):,}",
+        # read from the adapter, not typed in: with two panels a hard-coded name
+        # here silently mislabels which data the workbook was built from
+        "value": [ds.TABLE, f"{len(A):,}",
                   f"{panel['issuer_code'].nunique()}", f"{int(yv.sum())}",
                   f"{yv.mean():.4%}", f"{SHOCK_SD:.0f} standard deviation",
                   "sign of the fitted logistic coefficient",
