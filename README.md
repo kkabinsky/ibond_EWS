@@ -1,6 +1,8 @@
 # ThaiBMA Corporate Bond Early Warning System
 
-ระบบเตือนภัยล่วงหน้าสำหรับหุ้นกู้ภาคเอกชน พัฒนาสำหรับโครงการของสมาคมตลาดตราสารหนี้ไทย (ThaiBMA) ทำงานบนแผงข้อมูล iBond ที่มีตัวแปร 33 ตัว
+ระบบเตือนภัยล่วงหน้าสำหรับหุ้นกู้ภาคเอกชน พัฒนาสำหรับโครงการของสมาคมตลาดตราสารหนี้ไทย (ThaiBMA) ทำงานบนแผงข้อมูล iBond โดยใช้ตัวแปร 30 ตัว
+
+ตารางต้นทางมีคอลัมน์ที่เป็นตัวแปรอธิบายได้ 33 ตัว แต่เลือกเข้าแบบจำลองจริง 30 ตัว ชื่อตารางและชื่อไฟล์ที่มีเลข 33 อยู่ในคลังนี้ จึงเป็นชื่อเดิมของตารางต้นทาง ไม่ใช่จำนวนตัวแปรที่ใช้
 
 โปรแกรมตอบสองคำถามหลักรายบริษัท
 
@@ -77,7 +79,7 @@ thaibma/
 ├── run.py               ตัวเรียกโปรแกรม จัดการ sys.path ให้เอง
 ├── thaibma_paths.py     หาตำแหน่งฐานข้อมูลอัตโนมัติ
 ├── dataset/             ข้อมูลสามตาราง (csv.gz) + build_db.py สร้าง DB กลับคืน
-├── app/                   6 ไฟล์
+├── app/                   7 ไฟล์
 ├── app/legacy/            7 ไฟล์
 ├── ews/                  14 ไฟล์
 ├── models/               17 ไฟล์
@@ -94,7 +96,7 @@ thaibma/
 
 ---
 
-## คู่มือ: โปรแกรมแต่ละตัวทำอะไร (113 ไฟล์)
+## คู่มือ: โปรแกรมแต่ละตัวทำอะไร (115 ไฟล์)
 
 คำอธิบายในตารางดึงมาจาก docstring ของแต่ละไฟล์โดยตรง ช่องที่ว่างคือไฟล์ที่ยังไม่มี docstring
 
@@ -114,6 +116,7 @@ thaibma/
 | `final_complete_sidebar.py` | Final Complete Election Management System with Left Sidebar Navigation ALL functionality from original gui_app_flet.py without dialogs |
 | `monitor_service.py` | scheduled iBond monitoring with email alerts |
 | `notify.py` | email + Telegram alerting for the CMDF Credit EWS |
+| `pd11_panel.py` | ข้อมูลและกราฟ PD ของ 11 วิธี สำหรับสองเมนู PD ใน app.py อ่านผลจาก `dataset2/pd_curves.db` และ `dataset2/standalone_leadtime_runs/` |
 | `setup_credentials.py` | one-shot, safe setup of your ThaiBMA / iBond credentials |
 
 ### `app/legacy` — โปรแกรมหน้าจอรุ่นเก่า เก็บไว้อ้างอิง ไม่ใช่ตัวที่ใช้งาน

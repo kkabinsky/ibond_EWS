@@ -94,6 +94,10 @@ try:
     import openclaw_connector as openclaw
 except Exception:                      # OpenClaw remains an optional local service
     openclaw = None
+try:
+    import pd11_panel                  # PD of 11 methods, read back from sqlite
+except Exception:                      # the two PD menus just report it is missing
+    pd11_panel = None
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 XLSX = os.path.join(HERE, "credit_dataset_33features.xlsx")
@@ -2133,8 +2137,21 @@ def main(page):
     btn_tab22 = make_nav_button("Momentum & Hyperbolic Boundary",
                                 ft.Icons.SHOW_CHART, 20)
     btn_tab22.tab_idx = 98
+    btn_tab23 = make_nav_button("วิธี A: Three-layer Review Queue",
+                                ft.Icons.FILTER_ALT, 20)
+    btn_tab23.tab_idx = 97
+    btn_tab23 = make_nav_button("Explainable AI: LIME + SHAP",
+                                ft.Icons.LIGHTBULB, 20)
+    btn_tab23.tab_idx = 97
     btn_tab13_compare = make_nav_button("Compare iBond A1 vs A2 (33F)", ft.Icons.BALANCE, 11)
     btn_tab13_email = make_nav_button("Email Scheduler & Subscribers", ft.Icons.MARK_EMAIL_UNREAD, 2)
+    # PD ของ 11 วิธี อ่านผลจาก sqlite และสั่งรันใหม่ได้จากอีกเมนู
+    btn_pd_graph = make_nav_button("แสดง graph probability default",
+                                   ft.Icons.STACKED_LINE_CHART, 20)
+    btn_pd_graph.tab_idx = 96
+    btn_pd_run = make_nav_button("Run PD: 11 methods",
+                                 ft.Icons.PLAY_CIRCLE_OUTLINE, 20)
+    btn_pd_run.tab_idx = 95
 
     # These entries execute a workflow and then navigate to a result view. They
     # should not stay highlighted as if they were standalone pages.
@@ -2162,7 +2179,10 @@ def main(page):
         btn_tab13_tables,
     ]
     risk_model_buttons = [
+        btn_pd_graph,
+        btn_pd_run,
         btn_tab21,
+        btn_tab23,
         btn_tab22,
         btn_tab0,
         btn_tab10,
@@ -7001,6 +7021,7 @@ def main(page):
 
     # ============ Firm Shock & PD Threshold (real iBond panel, per issuer) ====
     import firm_shock_panel as _fsp
+    import lime_panel as _lime_panel
 
     fs_state = {"issuer": None, "workload": 0.05, "table": None,
                 "page": 0, "page_size": 25, "filter": "ALL"}
@@ -7151,7 +7172,7 @@ def main(page):
             fs_images.controls.append(ft.Column([
                 ft.Text(cap, size=12, weight=ft.FontWeight.BOLD,
                         color=C.BLUE_900),
-                ft.Image(src=_uri(b64), fit=ft.BoxFit.CONTAIN),
+                ft.Image(src=_uri(b64), fit=image_fit_contain),
             ], spacing=4))
         _fs_render_ladder(res["ladder"])
         fs_status.value = (f"{issuer}: {sm['n_months']} months, "
@@ -7180,6 +7201,7 @@ def main(page):
                            f"percentile points of it")
         _fs_render_table()
         _fs_load_issuer(fs_state["issuer"])
+        _xai_load_issuer(fs_state["issuer"])
 
     def _fs_page(delta):
         d = _fs_visible_rows()
@@ -7218,6 +7240,7 @@ def main(page):
     def _fs_on_issuer(e):
         fs_state["issuer"] = fs_issuer_dd.value
         _fs_load_issuer(fs_state["issuer"])
+        _xai_load_issuer(fs_state["issuer"])
 
     def _fs_on_workload(e):
         fs_state["workload"] = float(fs_workload_dd.value)
@@ -7227,6 +7250,301 @@ def main(page):
     fs_size_dd.on_select = _fs_on_size
     fs_issuer_dd.on_select = _fs_on_issuer
     fs_workload_dd.on_select = _fs_on_workload
+
+    # ----- Firm XAI: repeated LIME + global OOF SHAP + all 33 shocks ---------
+    xai_state = {"run": None, "rows": None, "summary": None,
+                 "page": 0, "page_size": 15, "sort": "lime"}
+    xai_status = ft.Text("No saved Firm XAI run loaded.", size=11,
+                         color=C.BLUE_GREY_700)
+    xai_kpis = ft.Row(spacing=8, wrap=True)
+    xai_table_host = ft.Column(spacing=6)
+    xai_page_label = ft.Text("", size=11, color=C.BLUE_GREY_700)
+    xai_compute_btn = ft.Button(
+        "Compute selected LIME", icon=ft.Icons.CALCULATE,
+        bgcolor=C.TEAL_700, color=C.WHITE, visible=False)
+    xai_sort_dd = ft.Dropdown(
+        label="Order", width=180, dense=True, value="lime",
+        options=[
+            ft.DropdownOption(key="lime", text="Local LIME impact"),
+            ft.DropdownOption(key="shock", text="One-SD shock impact"),
+            ft.DropdownOption(key="shap", text="Global SHAP importance"),
+            ft.DropdownOption(key="feature", text="Feature name"),
+        ])
+    xai_size_dd = ft.Dropdown(
+        label="Rows", width=100, dense=True, value="15",
+        options=[ft.DropdownOption(key="10", text="10"),
+                 ft.DropdownOption(key="15", text="15"),
+                 ft.DropdownOption(key="33", text="33")])
+
+    def _xai_kpi(label, value, tone=C.BLUE_800):
+        return ft.Container(
+            content=ft.Column([
+                ft.Text(label, size=9, color=C.BLUE_GREY_600),
+                ft.Text(str(value), size=13, weight=ft.FontWeight.BOLD,
+                        color=tone, max_lines=2),
+            ], spacing=2),
+            width=176, height=67, padding=8, bgcolor=C.WHITE,
+            border=ft.Border.all(1, UI["border"]), border_radius=6)
+
+    def _xai_num(value, decimals=4, suffix=""):
+        try:
+            number = float(value)
+            if not np.isfinite(number):
+                return "N/A"
+            return f"{number:.{decimals}f}{suffix}"
+        except (TypeError, ValueError):
+            return "N/A"
+
+    def _xai_sorted_rows():
+        data = xai_state.get("rows")
+        if data is None or data.empty:
+            return data
+        data = data.copy()
+        mode = xai_state.get("sort", "lime")
+        if mode == "lime" and data["lime_weight_mean"].notna().any():
+            data["_sort"] = data["lime_weight_mean"].abs()
+            return data.sort_values(["_sort", "shock_rank"], ascending=[False, True])
+        if mode == "shock":
+            return data.sort_values("adverse_delta_pp", ascending=False)
+        if mode == "shap":
+            return data.sort_values("mean_abs_shap_log_odds", ascending=False)
+        if mode == "feature":
+            return data.sort_values("feature_name")
+        return data.sort_values("shap_rank")
+
+    def _xai_render_table():
+        data = _xai_sorted_rows()
+        xai_table_host.controls.clear()
+        if data is None or data.empty:
+            xai_page_label.value = "No XAI feature rows are available."
+            return
+        size = int(xai_state.get("page_size", 15))
+        total = len(data)
+        max_page = max(0, (total - 1) // size)
+        xai_state["page"] = min(max(int(xai_state.get("page", 0)), 0), max_page)
+        offset = xai_state["page"] * size
+        shown = data.iloc[offset:offset + size]
+        xai_page_label.value = (f"page {xai_state['page'] + 1} of {max_page + 1}  |  "
+                                f"features {offset + 1}-{min(offset + size, total)} "
+                                f"of {total}")
+        rows = []
+        for _, row in shown.iterrows():
+            lime_value = row.get("lime_weight_mean")
+            lime_sd = row.get("lime_weight_sd")
+            lime_p05 = row.get("lime_weight_p05")
+            lime_p95 = row.get("lime_weight_p95")
+            group_note = str(row.get("lime_group_note") or "")
+            if pd.isna(lime_value):
+                lime_text = "GROUPED" if group_note else "N/A"
+                range_text = "amihud_monthly" if group_note else "N/A"
+                stability_text = "--"
+                lime_color = C.BLUE_GREY_500
+            else:
+                lime_text = f"{float(lime_value):+.5f}"
+                range_text = f"{float(lime_p05):+.5f} to {float(lime_p95):+.5f}"
+                stability = float(row.get("lime_sign_stability", np.nan))
+                stability_text = _xai_num(stability * 100, 0, "%")
+                lime_color = C.RED_700 if float(lime_value) > 0 else C.GREEN_700
+            delta = float(row.get("adverse_delta_pp", np.nan))
+            delta_color = C.RED_700 if np.isfinite(delta) and delta > 0 else C.GREEN_700
+            display_name = row.get("display_name")
+            feature_label = (str(display_name) if pd.notna(display_name)
+                             else str(row["feature_name"]))
+            rows.append(ft.DataRow(cells=[
+                ft.DataCell(ft.Text(feature_label, size=10,
+                                    weight=ft.FontWeight.BOLD)),
+                ft.DataCell(ft.Text(_xai_num(row.get("feature_value"), 4), size=10)),
+                ft.DataCell(ft.Text(lime_text, size=10, color=lime_color,
+                                    weight=ft.FontWeight.BOLD)),
+                ft.DataCell(ft.Text(range_text, size=10)),
+                ft.DataCell(ft.Text(stability_text, size=10,
+                                    color=(C.RED_700 if stability_text not in ("--", "N/A")
+                                           and float(row.get("lime_sign_stability", 1)) < 0.8
+                                           else C.BLUE_GREY_700))),
+                ft.DataCell(ft.Text(_xai_num(row.get("mean_abs_shap_log_odds"), 4),
+                                    size=10)),
+                ft.DataCell(ft.Text(_xai_num(float(row.get("lower_pd", np.nan)) * 100,
+                                             2, "%"), size=10)),
+                ft.DataCell(ft.Text(_xai_num(float(row.get("upper_pd", np.nan)) * 100,
+                                             2, "%"), size=10)),
+                ft.DataCell(ft.Text(_xai_num(delta, 2, " pp"), size=10,
+                                    color=delta_color, weight=ft.FontWeight.BOLD)),
+                ft.DataCell(ft.Text(str(int(row["shock_rank"])), size=10)),
+            ]))
+        table = ft.DataTable(
+            columns=[
+                ft.DataColumn(ft.Text("Feature", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Current", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("LIME mean", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("LIME 5-95%", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Sign stable", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Global SHAP |log-odds|",
+                                      weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("PD at -1 SD", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("PD at +1 SD", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Worst PD change", weight=ft.FontWeight.BOLD)),
+                ft.DataColumn(ft.Text("Shock rank", weight=ft.FontWeight.BOLD)),
+            ],
+            rows=rows, heading_row_height=40, data_row_min_height=38,
+            data_row_max_height=48, column_spacing=22)
+        xai_table_host.controls.append(scrollable_data_table(table))
+
+    def _xai_set_kpis(run, summary):
+        xai_kpis.controls.clear()
+        if not summary:
+            return
+        fidelity = summary.get("lime_fidelity_mean")
+        fidelity_sd = summary.get("lime_fidelity_sd")
+        if pd.notna(fidelity):
+            fidelity_text = f"{float(fidelity):.3f} +/- {float(fidelity_sd):.3f}"
+            fidelity_tone = C.GREEN_700 if float(fidelity) >= 0.70 else C.RED_700
+        else:
+            fidelity_text = "Not computed"
+            fidelity_tone = C.BLUE_GREY_600
+        margin = float(summary.get("margin", np.nan))
+        xai_kpis.controls.extend([
+            _xai_kpi("CatBoost OOF PD", _xai_num(float(summary["model_pd"]) * 100,
+                                                  2, "%"),
+                     C.RED_700 if margin <= 0 else C.BLUE_800),
+            _xai_kpi("Review threshold", _xai_num(float(summary["threshold"]) * 100,
+                                                   2, "%")),
+            _xai_kpi("OOF AUC", _xai_num(run.get("oof_auc"), 4)),
+            _xai_kpi("LIME local fidelity", fidelity_text, fidelity_tone),
+            _xai_kpi("Top local risk driver",
+                     summary.get("top_lime_risk_feature") or "Not computed",
+                     C.RED_700),
+            _xai_kpi("Top local protective driver",
+                     summary.get("top_lime_protective_feature") or "Not computed",
+                     C.GREEN_700),
+        ])
+
+    def _xai_load_issuer(issuer, update_page=True):
+        if not issuer:
+            return
+        try:
+            run = _lime_panel.latest_run(DB)
+            if not run:
+                xai_state.update({"run": None, "rows": None, "summary": None})
+                xai_status.value = "No completed Firm XAI run is stored in SQLite."
+                xai_compute_btn.visible = False
+                xai_kpis.controls.clear(); xai_table_host.controls.clear()
+                if update_page:
+                    page.update()
+                return
+            xai_state["run"] = run
+            rows, summary = _lime_panel.load_issuer_explanation(
+                DB, issuer_code=issuer, run_id=run["run_id"])
+            xai_state.update({"rows": rows, "summary": summary, "page": 0})
+            available = bool(summary and int(summary.get("lime_available") or 0))
+            xai_compute_btn.visible = not available
+            _xai_set_kpis(run, summary)
+            _xai_render_table()
+            run_time = str(run.get("completed_at") or run.get("run_at"))
+            if available:
+                xai_status.value = (
+                    f"{issuer} | {run['lime_n_runs']} LIME seeds x "
+                    f"{int(run['lime_samples']):,} perturbations | "
+                    f"30 interpretable groups | 33 SHAP/shock features | {run_time}")
+                xai_status.color = C.TEAL_800
+            else:
+                xai_status.value = (
+                    f"{issuer} has global SHAP and all 33 shocks. "
+                    "Repeated LIME has not been calculated for this issuer.")
+                xai_status.color = C.ORANGE_800
+        except Exception as ex:
+            xai_status.value = f"Cannot load Firm XAI results: {ex}"
+            xai_status.color = C.RED_700
+            xai_state.update({"rows": None, "summary": None})
+            xai_table_host.controls.clear(); xai_kpis.controls.clear()
+        if update_page:
+            page.update()
+
+    def _xai_page(delta):
+        data = _xai_sorted_rows()
+        if data is None or data.empty:
+            return
+        size = int(xai_state["page_size"])
+        max_page = max(0, (len(data) - 1) // size)
+        xai_state["page"] = min(max(xai_state["page"] + delta, 0), max_page)
+        _xai_render_table(); page.update()
+
+    def _xai_on_sort(e):
+        xai_state["sort"] = xai_sort_dd.value
+        xai_state["page"] = 0
+        _xai_render_table(); page.update()
+
+    def _xai_on_size(e):
+        xai_state["page_size"] = int(xai_size_dd.value)
+        xai_state["page"] = 0
+        _xai_render_table(); page.update()
+
+    def _xai_rebuild(_):
+        def _worker(__):
+            xai_status.value = "Building OOF SHAP, 33-feature shocks, and repeated LIME..."
+            xai_status.color = C.ORANGE_800
+            page.update()
+            try:
+                result = _lime_panel.run_pipeline(
+                    DB, workload=fs_state["workload"],
+                    seeds=_lime_panel.DEFAULT_SEEDS,
+                    samples=_lime_panel.DEFAULT_SAMPLES,
+                    lime_limit=_lime_panel.DEFAULT_LIME_LIMIT,
+                    shock_sd=1.0, verbose=False)
+                _xai_load_issuer(fs_state["issuer"], update_page=False)
+                status.value = (f"Firm XAI complete: {result['n_shock_rows']:,} shock rows, "
+                                f"{result['n_lime_issuers']} issuers with repeated LIME")
+            except Exception as ex:
+                xai_status.value = f"Firm XAI run failed: {ex}"
+                xai_status.color = C.RED_700
+            page.update()
+        run_async(_worker, "Firm XAI")
+
+    def _xai_compute_selected(_):
+        def _worker(__):
+            run = xai_state.get("run")
+            issuer = fs_state.get("issuer")
+            if not run or not issuer:
+                return
+            xai_status.value = f"Running repeated LIME for {issuer}..."
+            xai_status.color = C.ORANGE_800
+            page.update()
+            try:
+                count = _lime_panel.ensure_issuer_lime(
+                    DB, issuer_code=issuer, run_id=run["run_id"], verbose=False)
+                _xai_load_issuer(issuer, update_page=False)
+                status.value = f"Repeated LIME saved for {issuer}: {count} feature rows"
+            except Exception as ex:
+                xai_status.value = f"LIME failed for {issuer}: {ex}"
+                xai_status.color = C.RED_700
+            page.update()
+        run_async(_worker, "Selected issuer LIME")
+
+    xai_sort_dd.on_select = _xai_on_sort
+    xai_size_dd.on_select = _xai_on_size
+    xai_compute_btn.on_click = _xai_compute_selected
+
+    xai_panel = ft.Column([
+        ft.Divider(height=1, color=UI["border"]),
+        ft.Row([
+            ft.Icon(ft.Icons.LIGHTBULB, size=20, color=C.TEAL_700),
+            ft.Text("Firm Explainable AI: repeated LIME + OOF SHAP + 33 shocks",
+                    size=14, weight=ft.FontWeight.BOLD, color=C.BLUE_900),
+        ], spacing=6),
+        ft.Row([
+            ft.Button("Rebuild XAI database", icon=ft.Icons.PLAY_ARROW,
+                      on_click=_xai_rebuild, bgcolor=C.INDIGO_700, color=C.WHITE),
+            xai_compute_btn,
+            xai_sort_dd, xai_size_dd,
+            ft.IconButton(ft.Icons.CHEVRON_LEFT, tooltip="previous feature page",
+                          on_click=lambda _: _xai_page(-1)),
+            ft.IconButton(ft.Icons.CHEVRON_RIGHT, tooltip="next feature page",
+                          on_click=lambda _: _xai_page(1)),
+            xai_page_label,
+        ], spacing=7, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        xai_status,
+        xai_kpis,
+        xai_table_host,
+    ], spacing=10)
 
     firmshock_card = ft.Container(
         content=ft.Column([
@@ -7251,6 +7569,7 @@ def main(page):
             ft.Text("Shock ladder: movement of one determinant at a time",
                     size=13, weight=ft.FontWeight.BOLD, color=C.BLUE_900),
             fs_ladder_host,
+            xai_panel,
             ft.Text("All issuers, latest month", size=13,
                     weight=ft.FontWeight.BOLD, color=C.BLUE_900),
             ft.Row([
@@ -7393,7 +7712,7 @@ def main(page):
                 continue
             hb_images.controls.append(ft.Column([
                 ft.Text(cap, size=12, weight=ft.FontWeight.BOLD, color=C.BLUE_900),
-                ft.Image(src=_uri(b64), fit=ft.BoxFit.CONTAIN),
+                ft.Image(src=_uri(b64), fit=image_fit_contain),
             ], spacing=4))
 
         _hb_render_compare(res)
@@ -7460,6 +7779,194 @@ def main(page):
 
     view_hyperbolic = ft.Container(
         content=ft.Column([hyperbolic_card,
+                           ft.Container(height=320,
+                                        bgcolor=ft.Colors.with_opacity(0.01,
+                                                                       C.BLACK))],
+                          spacing=12, expand=True, scroll=ft.ScrollMode.ALWAYS),
+        expand=True)
+
+    # ============ วิธี A: three-layer review queue ===========================
+    import a_approach as _aa
+
+    aa_state = {"workload": 0.05, "cut": 10.0, "frag": 1.0, "res": None}
+
+    aa_status = ft.Text("", size=12, color=C.BLUE_GREY_700)
+    aa_kpis = ft.Row(spacing=10, wrap=True)
+    aa_images = ft.Column(spacing=12)
+    aa_eval_host = ft.Column(spacing=6)
+    aa_queue_host = ft.Column(spacing=6)
+
+    aa_workload_dd = ft.Dropdown(
+        label="Review capacity", width=190, dense=True, value="0.05",
+        options=[ft.DropdownOption(key="0.02", text="2%"),
+                 ft.DropdownOption(key="0.05", text="5%  (recommended)"),
+                 ft.DropdownOption(key="0.10", text="10%")])
+    aa_frag_dd = ft.Dropdown(
+        label="Fragility cut", width=170, dense=True, value="1.0",
+        options=[ft.DropdownOption(key="0.5", text="0.5 SD"),
+                 ft.DropdownOption(key="1.0", text="1.0 SD"),
+                 ft.DropdownOption(key="1.5", text="1.5 SD"),
+                 ft.DropdownOption(key="2.0", text="2.0 SD")])
+    aa_cut_dd = ft.Dropdown(
+        label="Accounting decile", width=170, dense=True, value="10",
+        options=[ft.DropdownOption(key="5", text="bottom 5%"),
+                 ft.DropdownOption(key="10", text="bottom 10%"),
+                 ft.DropdownOption(key="15", text="bottom 15%")])
+
+    _AA_TONE = {"HIGH RISK": C.RED_700, "FRAGILE": C.ORANGE_800,
+                "MASKED": C.PURPLE_700, "OK": C.GREEN_800}
+
+    def _aa_kpi(label, value, tone="#1d4ed8"):
+        return ft.Container(
+            content=ft.Column([
+                ft.Text(label, size=10, color=C.BLUE_GREY_600),
+                ft.Text(str(value), size=16, weight=ft.FontWeight.BOLD, color=tone),
+            ], spacing=2),
+            padding=10, bgcolor=C.WHITE, border_radius=8,
+            border=ft.Border.all(1, UI["border"]), width=170)
+
+    def _aa_render_eval(res):
+        aa_eval_host.controls.clear()
+        e = _aa.evaluate(res)
+        rows = []
+        for _, r in e.iterrows():
+            full = int(r.caught) == int(r["of"])
+            rows.append(ft.DataRow([
+                ft.DataCell(ft.Text(str(r.rule), weight=ft.FontWeight.BOLD)),
+                ft.DataCell(ft.Text(str(int(r.n)))),
+                ft.DataCell(ft.Text(f"{r.pct:.1f}%")),
+                ft.DataCell(ft.Text(f"{int(r.caught)}/{int(r['of'])}",
+                                    color=C.GREEN_800 if full else C.BLUE_GREY_700,
+                                    weight=ft.FontWeight.BOLD)),
+            ]))
+        aa_eval_host.controls.append(scrollable_data_table(ft.DataTable(
+            columns=[ft.DataColumn(ft.Text("Rule", weight=ft.FontWeight.BOLD)),
+                     ft.DataColumn(ft.Text("Queue", weight=ft.FontWeight.BOLD)),
+                     ft.DataColumn(ft.Text("Share", weight=ft.FontWeight.BOLD)),
+                     ft.DataColumn(ft.Text("Events caught",
+                                           weight=ft.FontWeight.BOLD))],
+            rows=rows, heading_row_height=34, data_row_max_height=32)))
+
+    def _aa_render_queue(res):
+        aa_queue_host.controls.clear()
+        d = res["table"]
+        q = d[d.queue]
+        rows = []
+        for k, r in q.iterrows():
+            tone = _AA_TONE.get(str(r.status), C.BLUE_GREY_700)
+            frag = "--" if not (r.fragility == r.fragility) or r.fragility == float("inf") \
+                else f"{r.fragility:.2f}"
+            rows.append(ft.DataRow([
+                ft.DataCell(ft.Text(str(k), weight=ft.FontWeight.BOLD)),
+                ft.DataCell(ft.Text(str(r.month))),
+                ft.DataCell(ft.Text(f"{r.pd_now:.6f}")),
+                ft.DataCell(ft.Text(frag)),
+                ft.DataCell(ft.Text(f"{r.REtoTA_p:.0f}")),
+                ft.DataCell(ft.Text(f"{r.CashRatio_p:.0f}")),
+                ft.DataCell(ft.Text(str(r.layer))),
+                ft.DataCell(ft.Text(str(r.status), color=tone,
+                                    weight=ft.FontWeight.BOLD)),
+                ft.DataCell(ft.Text("yes" if r.ever_event else "",
+                                    color=C.GREEN_800,
+                                    weight=ft.FontWeight.BOLD)),
+            ]))
+        aa_queue_host.controls.append(scrollable_data_table(ft.DataTable(
+            columns=[ft.DataColumn(ft.Text("Issuer", weight=ft.FontWeight.BOLD)),
+                     ft.DataColumn(ft.Text("Month", weight=ft.FontWeight.BOLD)),
+                     ft.DataColumn(ft.Text("PD", weight=ft.FontWeight.BOLD)),
+                     ft.DataColumn(ft.Text("Fragility SD",
+                                           weight=ft.FontWeight.BOLD)),
+                     ft.DataColumn(ft.Text("REtoTA p", weight=ft.FontWeight.BOLD)),
+                     ft.DataColumn(ft.Text("CashRatio p",
+                                           weight=ft.FontWeight.BOLD)),
+                     ft.DataColumn(ft.Text("Layer", weight=ft.FontWeight.BOLD)),
+                     ft.DataColumn(ft.Text("Status", weight=ft.FontWeight.BOLD)),
+                     ft.DataColumn(ft.Text("Had event",
+                                           weight=ft.FontWeight.BOLD))],
+            rows=rows, heading_row_height=34, data_row_max_height=32)))
+
+    def update_aapproach_tab(_=None):
+        aa_status.value = "computing the three layers, the shock scan takes a moment ..."
+        page.update()
+        try:
+            res = _aa.build(aa_state["workload"], aa_state["cut"], aa_state["frag"])
+        except Exception as ex:
+            aa_status.value = f"failed: {ex}"
+            page.update(); return
+        aa_state["res"] = res
+        d = res["table"]
+        aa_kpis.controls.clear(); aa_images.controls.clear()
+
+        n_q = int(d.queue.sum())
+        caught = int((d.queue & d.ever_event).sum())
+        aa_kpis.controls.extend([
+            _aa_kpi("Queue", f"{n_q}  ({100*n_q/len(d):.1f}%)"),
+            _aa_kpi("Layer 1  PD", int(d.L1_pd.sum()), C.RED_700),
+            _aa_kpi("Layer 2  fragile", int(d.L2_fragile.sum()), C.ORANGE_800),
+            _aa_kpi("Layer 3  masked", int(d.L3_masked.sum()), C.PURPLE_700),
+            _aa_kpi("Events caught", f"{caught}/{res['n_events']}",
+                    C.GREEN_800 if caught == res["n_events"] else C.BLUE_GREY_700),
+            _aa_kpi("PD threshold", f"{res['thr']:.6f}"),
+        ])
+        b64 = _aa.figure(res)
+        if b64:
+            aa_images.controls.append(ft.Image(src=_uri(b64),
+                                               fit=ft.BoxFit.CONTAIN))
+        _aa_render_eval(res)
+        _aa_render_queue(res)
+        miss = d[d.ever_event & ~d.queue]
+        aa_status.value = (
+            f"queue {n_q} of {len(d)} issuers   |   catches {caught} of "
+            f"{res['n_events']} issuers that recorded an event   |   "
+            + ("none missed" if miss.empty
+               else f"missed: {', '.join(miss.index.tolist())}"))
+        page.update()
+
+    def _aa_on_change(e):
+        aa_state["workload"] = float(aa_workload_dd.value)
+        aa_state["frag"] = float(aa_frag_dd.value)
+        aa_state["cut"] = float(aa_cut_dd.value)
+        update_aapproach_tab()
+
+    aa_workload_dd.on_select = _aa_on_change
+    aa_frag_dd.on_select = _aa_on_change
+    aa_cut_dd.on_select = _aa_on_change
+
+    aapproach_card = ft.Container(
+        content=ft.Column([
+            ft.Text("วิธี A — Three-layer review queue", size=18,
+                    weight=ft.FontWeight.BOLD, color=C.BLUE_900),
+            ft.Text("A single PD cut-off at 5% capacity flags 15 issuers and catches "
+                    "4 of the 8 that recorded an event. The four it misses fail for "
+                    "three different reasons, so three layers are used. Layer 1 is the "
+                    "PD level. Layer 2 reads the shock ladder backwards: an issuer "
+                    "still under the line, but which one determinant moving a quarter "
+                    "of a standard deviation would push over, is sitting on the line "
+                    "whatever its number says. Layer 3 uses retained earnings and cash "
+                    "with no liquidity term, because the PD model leans on "
+                    "amihud_monthly and an issuer whose books are poor but whose bonds "
+                    "still trade freely never rises up the queue.",
+                    size=11, color=C.BLUE_GREY_700),
+            ft.Row([aa_workload_dd, aa_frag_dd, aa_cut_dd,
+                    ft.FilledButton("Compute", icon=ft.Icons.REFRESH,
+                                    on_click=lambda _: update_aapproach_tab())],
+                   spacing=10, wrap=True),
+            aa_status,
+            ft.Divider(height=1, color=UI["border"]),
+            aa_kpis,
+            ft.Text("What each combination of layers costs and catches", size=13,
+                    weight=ft.FontWeight.BOLD, color=C.BLUE_900),
+            aa_eval_host,
+            aa_images,
+            ft.Text("The review queue", size=13,
+                    weight=ft.FontWeight.BOLD, color=C.BLUE_900),
+            aa_queue_host,
+        ], spacing=12),
+        padding=16, bgcolor=UI["surface"], border_radius=12,
+        border=ft.Border.all(1, UI["border"]), shadow=SHADOW)
+
+    view_aapproach = ft.Container(
+        content=ft.Column([aapproach_card,
                            ft.Container(height=320,
                                         bgcolor=ft.Colors.with_opacity(0.01,
                                                                        C.BLACK))],
@@ -8861,6 +9368,227 @@ def main(page):
     baseline_views = [_make_baseline_view(nm, label)
                       for nm, label, _ in BASELINE_MENUS]
 
+    # ------------------------------------------------------------------
+    # PD ของ 11 วิธี  สองเมนู
+    #   96  แสดง graph probability default  อ่านผลจาก sqlite แล้ววาด
+    #   95  Run PD: 11 methods              สั่งรันใหม่ พิมพ์ออก command line
+    # ตรรกะทั้งหมดอยู่ใน pd11_panel.py เพื่อให้ส่วนนี้เหลือแค่ปุ่มกับการแสดงผล
+    # ------------------------------------------------------------------
+    pd11_state = {"loaded": False}
+
+    def _pd11_table(frame):
+        cols = ["method", "panel", "auc_oof", "average_precision_oof",
+                "recall_at_workload", "precision_at_workload",
+                "detected_events", "evaluable_events", "lead_median_days",
+                "threshold", "runtime_seconds"]
+        head = ["วิธี", "พาเนล", "AUC", "AP", "Recall", "Precision",
+                "ตรวจพบ", "วัดได้", "Lead med (วัน)", "เกณฑ์แจ้งเตือน", "เวลา (วิ)"]
+
+        def cell(row, name):
+            value = row[name]
+            if name in ("method", "panel"):
+                text = str(value)
+            elif name in ("detected_events", "evaluable_events"):
+                text = "%d" % int(value)
+            elif name == "lead_median_days":
+                text = "--" if pd.isna(value) else "%.0f" % float(value)
+            elif name == "runtime_seconds":
+                text = "%.1f" % float(value)
+            else:
+                text = "%.4f" % float(value)
+            return ft.DataCell(ft.Text(text, size=11))
+
+        return scrollable_data_table(ft.DataTable(
+            columns=[ft.DataColumn(ft.Text(c, weight=ft.FontWeight.BOLD, size=11))
+                     for c in head],
+            rows=[ft.DataRow([cell(r, c) for c in cols])
+                  for _, r in frame.iterrows()],
+            heading_row_height=32, data_row_max_height=30))
+
+    pd11_status = ft.Text("Ready.", size=12, color=UI["muted"])
+    pd11_perf_table = ft.Container()
+    pd11_perf_img = ft.Image(src="", visible=False, fit=image_fit_contain)
+    pd11_issuer_img = ft.Image(src="", visible=False, fit=image_fit_contain)
+    pd11_query = ft.TextField(label="ชื่อบริษัท หรือ issuer_code", width=320,
+                              value="THAI AIRWAYS", dense=True)
+    pd11_only_events = ft.Checkbox(label="เฉพาะบริษัทที่เกิดเหตุการณ์", value=True)
+    pd11_issuer_list = ft.Dropdown(label="เลือกจากรายการ", width=340, options=[])
+
+    def _pd11_refresh_list():
+        if pd11_panel is None:
+            return
+        try:
+            names = pd11_panel.list_issuers()
+        except Exception:
+            return
+        if pd11_only_events.value:
+            names = names[names["has_event"]]
+        pd11_issuer_list.options = [
+            ft.dropdown.Option(key=str(r.issuer_code),
+                               text="%s  (%s)" % (str(r.firm_name)[:34], r.issuer_code))
+            for r in names.itertuples(index=False)]
+
+    def pd11_load_performance(_=None):
+        if pd11_panel is None:
+            pd11_status.value = "ไม่พบโมดูล pd11_panel.py"
+            page.update()
+            return
+        try:
+            frame = pd11_panel.load_performance()
+            if frame.empty:
+                pd11_status.value = " | ".join(pd11_panel.missing_sources()) or "ยังไม่มีผล"
+                page.update()
+                return
+            pd11_perf_table.content = _pd11_table(frame)
+            pd11_perf_img.src = _uri(_b64(pd11_panel.figure_performance(frame)))
+            pd11_perf_img.visible = True
+            _pd11_refresh_list()
+            notes = pd11_panel.missing_sources()
+            pd11_status.value = ("อ่านผล %d วิธีจาก sqlite แล้ว" % len(frame)
+                                 + ("  |  " + " | ".join(notes) if notes else ""))
+            pd11_state["loaded"] = True
+            print(pd11_panel.format_performance(frame), flush=True)
+        except Exception as exc:
+            pd11_status.value = "อ่านผลไม่ได้: %s" % exc
+        page.update()
+
+    def pd11_draw_issuer(_=None):
+        if pd11_panel is None:
+            pd11_status.value = "ไม่พบโมดูล pd11_panel.py"
+            page.update()
+            return
+        query = (pd11_issuer_list.value or pd11_query.value or "").strip()
+        if not query:
+            pd11_status.value = "ใส่ชื่อบริษัทหรือเลือกจากรายการก่อน"
+            page.update()
+            return
+        try:
+            code, name = pd11_panel.resolve_issuer(query)
+            pd11_issuer_img.src = _uri(_b64(pd11_panel.figure_issuer(code, name), dpi=132))
+            pd11_issuer_img.visible = True
+            pd11_status.value = "วาด PD ของ %s (%s) ครบทุกวิธีแล้ว" % (name, code)
+            print("PD graph: %s (%s)" % (name, code), flush=True)
+        except Exception as exc:
+            pd11_status.value = "วาดกราฟไม่ได้: %s" % exc
+        page.update()
+
+    view_pd_graph = ft.Column([
+        card(ft.Column([
+            ft.Text("PD 3 เดือนของ 11 วิธี", size=15,
+                    weight=ft.FontWeight.BOLD, color=UI["primary_dark"]),
+            ft.Text("เก้าวิธีมาจากการรัน dataset2/leadtime_allmethods.py และสองแนวทาง "
+                    "Approach 1 กับ Approach 2 มาจาก dataset2/pd_curves.py "
+                    "ค่าทุกตัวอ่านจาก sqlite ไม่ได้คำนวณใหม่ตอนเปิดหน้านี้ "
+                    "คอลัมน์พาเนลบอกว่าวิธีนั้นรันบนพาเนลเต็มหรือชุดความเสี่ยง "
+                    "จึงไม่ควรเทียบตัวเลขข้ามพาเนลโดยไม่ดูคอลัมน์นี้",
+                    size=11, color=C.GREY_700),
+            ft.Row([
+                ft.Button("โหลดผลจากฐานข้อมูล", icon=ft.Icons.REFRESH,
+                          on_click=pd11_load_performance,
+                          bgcolor=UI["primary"], color=C.WHITE),
+                pd11_status,
+            ], spacing=10, wrap=True),
+        ], spacing=8)),
+        card(ft.Column([
+            ft.Text("ผลของทุกวิธี จากตาราง sqlite", size=13,
+                    weight=ft.FontWeight.BOLD, color=UI["primary_dark"]),
+            pd11_perf_table,
+            pd11_perf_img,
+        ], spacing=8)),
+        card(ft.Column([
+            ft.Text("กราฟ PD รายบริษัท", size=13,
+                    weight=ft.FontWeight.BOLD, color=UI["primary_dark"]),
+            ft.Row([pd11_issuer_list, pd11_only_events, pd11_query,
+                    ft.Button("วาดกราฟ", icon=ft.Icons.SHOW_CHART,
+                              on_click=pd11_draw_issuer,
+                              bgcolor=UI["accent"], color=C.WHITE)],
+                   spacing=10, wrap=True),
+            ft.Text("เส้นดำตั้งคือเดือนที่เกิดเหตุการณ์ แถบเทาคือช่วง 1 ถึง 3 เดือน "
+                    "ก่อนหน้า ซึ่งเป็นช่วงที่นับว่าเตือนทัน",
+                    size=11, color=C.GREY_700),
+            pd11_issuer_img,
+        ], spacing=8)),
+    ], spacing=12, scroll=ft.ScrollMode.AUTO)
+
+    pd11_run_status = ft.Text("Ready.", size=12, color=UI["muted"])
+    pd11_run_log = ft.Text("", size=11, color=C.GREY_700,
+                           selectable=True, font_family="Consolas")
+    pd11_run_tables = ft.Container()
+    pd11_skip_nine = ft.Checkbox(
+        label="ข้ามเก้าวิธี รันแต่สองแนวทาง เร็วกว่ามาก", value=False)
+
+    def pd11_run(_=None):
+        if pd11_panel is None:
+            pd11_run_status.value = "ไม่พบโมดูล pd11_panel.py"
+            page.update()
+            return
+        lines: list = []
+
+        def progress(message):
+            lines.append(str(message))
+            pd11_run_log.value = "\n".join(lines[-24:])
+            pd11_run_status.value = str(message)[:160]
+            page.update()
+
+        pd11_run_status.value = ("กำลังรัน ผลทุกบรรทัดพิมพ์ออก command line ด้วย "
+                                 "เก้าวิธีใช้เวลาราวสิบนาที")
+        page.update()
+        try:
+            result = pd11_panel.run_pd(progress=progress, app_db=DB,
+                                       skip_nine=bool(pd11_skip_nine.value))
+            if not result["ok"]:
+                pd11_run_status.value = "รันไม่สำเร็จ ดูรายละเอียดใน command line"
+                page.update()
+                return
+            written = result["tables"]
+            pd11_run_tables.content = ft.Column([
+                ft.Text("เขียนลง %s แล้ว" % os.path.basename(DB), size=12,
+                        weight=ft.FontWeight.BOLD, color=UI["primary_dark"]),
+                *[ft.Text("  %s   %s แถว" % (name, format(count, ",")), size=11)
+                  for name, count in written.items()],
+            ], spacing=4)
+            pd11_perf_table.content = _pd11_table(result["performance"])
+            pd11_perf_img.src = _uri(_b64(
+                pd11_panel.figure_performance(result["performance"])))
+            pd11_perf_img.visible = True
+            _pd11_refresh_list()
+            pd11_run_status.value = ("เสร็จใน %.1f วินาที เขียนตาราง pd11_ "
+                                     "ลงฐานข้อมูลแล้ว"
+                                     % result["runtime_seconds"])
+        except Exception as exc:
+            pd11_run_status.value = "รันไม่สำเร็จ: %s" % exc
+        page.update()
+
+    view_pd_run = ft.Column([
+        card(ft.Column([
+            ft.Text("Run PD: 11 methods", size=15,
+                    weight=ft.FontWeight.BOLD, color=UI["primary_dark"]),
+            ft.Text("ปุ่มนี้สั่งรันสองโปรแกรมในโฟลเดอร์ dataset2 ตามลำดับ คือ "
+                    "pd_curves.py build สำหรับ Approach 1 และ 2 แล้วต่อด้วย "
+                    "leadtime_allmethods.py run สำหรับอีกเก้าวิธี "
+                    "ทุกบรรทัดที่โปรแกรมลูกพิมพ์จะออกที่ command line ด้วย "
+                    "เมื่อเสร็จจะรวมผลเป็นตาราง pd11_model_performance, "
+                    "pd11_oof_scores และ pd11_run_metadata ในฐานข้อมูลของแอป",
+                    size=11, color=C.GREY_700),
+            ft.Row([
+                ft.Button("เริ่มรัน PD", icon=ft.Icons.PLAY_ARROW,
+                          on_click=pd11_run, bgcolor=UI["primary"], color=C.WHITE),
+                pd11_skip_nine,
+            ], spacing=12, wrap=True),
+            pd11_run_status,
+        ], spacing=8)),
+        card(ft.Column([
+            ft.Text("บรรทัดล่าสุดจากการรัน", size=13,
+                    weight=ft.FontWeight.BOLD, color=UI["primary_dark"]),
+            pd11_run_log,
+        ], spacing=8)),
+        card(ft.Column([
+            ft.Text("ตารางที่เขียนลงฐานข้อมูล", size=13,
+                    weight=ft.FontWeight.BOLD, color=UI["primary_dark"]),
+            pd11_run_tables,
+        ], spacing=8)),
+    ], spacing=12, scroll=ft.ScrollMode.AUTO)
+
     main_content_container = ft.Container(content=view_approach1, expand=True, padding=ft.Padding.only(left=6, right=6, top=6, bottom=6))
 
     def set_tab(idx):
@@ -8895,10 +9623,31 @@ def main(page):
                 nav_button.bgcolor = def_bg
                 nav_button.color = def_fg
 
+        if idx == 96:
+            if not pd11_state.get("loaded"):
+                pd11_load_performance()
+            main_content_container.content = view_pd_graph
+            page.update()
+            return
+        if idx == 95:
+            main_content_container.content = view_pd_run
+            page.update()
+            return
+        if idx == 97:
+            if aa_state.get("res") is None:
+                update_aapproach_tab()
+            main_content_container.content = view_aapproach
+            page.update()
+            return
         if idx == 98:
             if hb_state.get("res") is None:
                 update_hyperbolic_tab()
             main_content_container.content = view_hyperbolic
+            page.update()
+            return
+        if idx == 97:
+            update_firmshock_tab()
+            main_content_container.content = view_firmshock
             page.update()
             return
         if idx == 99:
@@ -8979,6 +9728,7 @@ def main(page):
 
     btn_tab21.on_click = lambda _: set_tab(99)
     btn_tab22.on_click = lambda _: set_tab(98)
+    btn_tab23.on_click = lambda _: set_tab(97)
     btn_tab0.on_click = lambda _: set_tab(0)
     btn_tab1.on_click = lambda _: set_tab(1)
     btn_tab2.on_click = lambda _: set_tab(2)
@@ -10013,6 +10763,16 @@ def main(page):
                   f"table={len(fs_table_host.controls)>0} "
                   f"switch={first}->{fs_state.get('issuer')} "
                   f"figures_after={len(fs_images.controls)}")
+            set_tab(97)
+            xrows = xai_state.get("rows")
+            grouped = (int(xrows["lime_group_note"].astype(bool).sum())
+                       if xrows is not None and not xrows.empty else 0)
+            assert xrows is not None and len(xrows) == 33
+            assert len(xai_table_host.controls) == 1
+            assert (isinstance(xai_table_host.controls[0], ft.Row)
+                    and xai_table_host.controls[0].scroll == ft.ScrollMode.ALWAYS)
+            print(f"firm-XAI tab OK features={len(xrows)} grouped_amihud={grouped} "
+                  f"horizontal_scroll=always run={xai_state['run']['run_id']}")
         except Exception:
             print("FIRM-SHOCK TAB ERROR"); traceback.print_exc()
 
@@ -10033,6 +10793,21 @@ def main(page):
                   f"events_tbl={len(hb_event_host.controls)>0}")
         except Exception:
             print("HYPERBOLIC TAB ERROR"); traceback.print_exc()
+
+        # วิธี A: three-layer queue
+        try:
+            set_tab(97)
+            r = aa_state.get("res")
+            d = r["table"]
+            print(f"a-approach tab OK queue={int(d.queue.sum())}/{len(d)} "
+                  f"L1={int(d.L1_pd.sum())} L2={int(d.L2_fragile.sum())} "
+                  f"L3={int(d.L3_masked.sum())} "
+                  f"caught={int((d.queue & d.ever_event).sum())}/{r['n_events']} "
+                  f"kpis={len(aa_kpis.controls)} figures={len(aa_images.controls)} "
+                  f"eval={len(aa_eval_host.controls)>0} "
+                  f"queue_tbl={len(aa_queue_host.controls)>0}")
+        except Exception:
+            print("A-APPROACH TAB ERROR"); traceback.print_exc()
 
         # Monitoring tab: settings, status chips and run history must render
         try:
