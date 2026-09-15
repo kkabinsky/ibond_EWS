@@ -53,10 +53,14 @@ warnings.filterwarnings("ignore")
 import cmdf_feature_select as fs
 import cmdf_tree_classify as cl
 import cmdf_tree_models as tm
+import ibond_dataset as ds
 
 OUTDIR = tm.OUTDIR
 DB = tm.DB
+RESULT_DB = ds.RESULT_DB
 out = tm.out
+
+CSV_NAME = "importance_default_event.csv"
 
 MODELS = ["Random Forest", "XGBoost", "CatBoost", "LightGBM"]
 MC = {"Random Forest": "#2e7d4f", "XGBoost": "#1f3a5f",
@@ -438,6 +442,97 @@ def write_tex(d, perm):
     return p
 
 
+def ensure_csv(panel=None, X=None, y=None, cols=None, verbose=True):
+    """Return the path to importance_default_event.csv, computing it if absent.
+
+    WHY THIS EXISTS
+        Every shock and threshold module ranks determinants by reading this file,
+        and none of them created it. On a fresh checkout the whole family therefore
+        died on a FileNotFoundError before doing any work, and the fix -- run
+        make_importance_default.py first -- was documented nowhere the error
+        message could be seen.
+
+        Only the gain and SHAP columns are needed for a ranking, so this shortcut
+        skips the permutation pass, the figures and the LaTeX, which is what made
+        the full run slow enough to be worth avoiding in the first place.
+    """
+    p = out(CSV_NAME)
+    if os.path.exists(p):
+        return p
+    if verbose:
+        print(f"  {CSV_NAME} not found for dataset {ds.CHOICE}; building it "
+              f"(gain + SHAP only) ...")
+    if panel is None:
+        panel, X, y, cols = cl.load_panel(verbose=verbose)
+    d, _ = gain_and_shap(panel, X, y, cols)
+    d["pretty"] = d["feature"].map(lambda c: tm.PRETTY.get(c, c))
+    d.to_csv(p, index=False)
+    if verbose:
+        print(f"  wrote {p}")
+    return p
+
+
+PERM_CSV = "importance_default_perm.csv"
+GAIN, PERM = "gain", "perm"
+
+
+def rank_source_from_argv(default=PERM):
+    """Read --rank perm|gain, and remove it from sys.argv."""
+    if "--rank" in sys.argv:
+        i = sys.argv.index("--rank")
+        if i + 1 >= len(sys.argv):
+            raise SystemExit("--rank expects 'perm' or 'gain'")
+        v = sys.argv[i + 1].strip().lower()
+        del sys.argv[i:i + 2]
+        if v not in (GAIN, PERM):
+            raise SystemExit(f"--rank expects 'perm' or 'gain', got {v!r}")
+        return v
+    return default
+
+
+def ranking(cols, panel=None, X=None, y=None, source=PERM, verbose=True):
+    """Determinants ordered by importance, out-of-sample first.
+
+    WHY NOT GAIN
+        Every shock figure picks which determinants to move by reading this
+        ranking, and every one of them used the ``gain`` column. This module's own
+        documentation calls gain "the least trustworthy of the three": it is
+        measured in-sample, on a panel with 32 positive months from 8 issuers, and
+        it reports what the trees happened to split on rather than what carries
+        information about the event.
+
+        The permutation column is measured leave-one-issuer-out, so a determinant
+        scores only if shuffling it in rows the model never saw actually costs AUC.
+        That is the question a shock analysis needs answered before it decides
+        what is worth shocking.
+
+    Falls back to gain when the permutation pass has not been run, and says so,
+    rather than silently ranking on the weaker measure.
+
+    Returns (ordered determinants, the score series, a label naming the measure).
+    """
+    p = out(PERM_CSV)
+    if source == PERM and os.path.exists(p):
+        d = pd.read_csv(p)
+        if "auc_drop" in d.columns and d["auc_drop"].notna().any():
+            r = (d.groupby("feature")["auc_drop"].mean()
+                 .sort_values(ascending=False))
+            label = "out-of-sample permutation AUC drop (leave-one-issuer-out)"
+            order = [f for f in r.index if f in cols]
+            if verbose:
+                print(f"  ranked by {label}")
+            return order, r, label
+    d = pd.read_csv(ensure_csv(panel, X, y, cols, verbose=verbose))
+    r = d.groupby("feature")["gain"].mean().sort_values(ascending=False)
+    label = "in-sample gain"
+    if verbose:
+        why = ("as requested" if source == GAIN else
+               f"because {PERM_CSV} is missing -- run make_importance_default.py "
+               f"without --no-perm to rank out-of-sample instead")
+        print(f"  ranked by {label}, {why}")
+    return [f for f in r.index if f in cols], r, label
+
+
 def main():
     print("=" * 96)
     print("Feature importance against the real default event, every tree model")
@@ -475,10 +570,10 @@ def main():
     d.to_csv(out("importance_default_event.csv"), index=False)
     if not perm.empty:
         perm.to_csv(out("importance_default_perm.csv"), index=False)
-    con = sqlite3.connect(DB)
-    d.to_sql("cmdf_importance_default", con, if_exists="replace", index=False)
+    con = sqlite3.connect(RESULT_DB)
+    d.to_sql(ds.tname("cmdf_importance_default"), con, if_exists="replace", index=False)
     if not perm.empty:
-        perm.to_sql("cmdf_importance_default_perm", con, if_exists="replace",
+        perm.to_sql(ds.tname("cmdf_importance_default_perm"), con, if_exists="replace",
                     index=False)
     con.commit(); con.close()
 

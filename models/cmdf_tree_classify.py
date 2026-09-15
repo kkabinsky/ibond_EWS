@@ -44,17 +44,20 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from thaibma_paths import DATA_ROOT  # data lives outside the repo
+import ibond_dataset as ds          # which panel: 1 = 293 issuers, 2 = 941 firms
 
 warnings.filterwarnings("ignore")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUTDIR = os.path.join(DATA_ROOT, "tex_out")
-DB = os.path.join(DATA_ROOT, "cmdf_credit.db")
+OUTDIR = ds.OUTDIR                  # tex_out/ds1 or tex_out/ds2 -- runs never collide
+DB = ds.READ_DB                     # the panel is read from here
+RESULT_DB = ds.RESULT_DB            # results are always written to cmdf_credit.db
 os.makedirs(OUTDIR, exist_ok=True)
 
 
 def out(name):
-    return os.path.join(OUTDIR, name)
+    """Resolved on every call, so switching dataset mid-process redirects output."""
+    return ds.out(name)
 
 
 BOND_33 = [
@@ -82,35 +85,80 @@ plt.rcParams.update({"font.size": 9, "figure.facecolor": "white"})
 
 
 # ================================================================== data =====
-def load_panel(db=DB, verbose=True):
-    con = sqlite3.connect(db)
-    panel = pd.read_sql("SELECT * FROM ibond_33features_panel", con)
-    dflt = pd.read_sql("SELECT * FROM ibond_default_payment", con)
-    con.close()
+def _label_from_default_register(panel, con):
+    """Dataset 1: the panel carries no label, so build it from the ThaiBMA register.
 
-    panel["month_dt"] = pd.to_datetime(panel["month"], errors="coerce")
+    A month is positive when the issuer's FIRST recorded missed payment falls
+    within the next three months, the same convention dataset 2 stores directly in
+    its y_pre3m column.
+    """
+    dflt = pd.read_sql("SELECT * FROM ibond_default_payment", con)
     y = pd.Series(0, index=panel.index, dtype=int)
-    if not dflt.empty:
-        d = dflt.copy()
-        d["issuer_code"] = d["symbol"].astype(str).str.extract(r"^([A-Z]+)")[0]
-        d["payment_date"] = pd.to_datetime(d["payment_date"], errors="coerce")
-        first = (d.dropna(subset=["payment_date"])
-                 .groupby("issuer_code")["payment_date"].min())
-        ev = panel["issuer_code"].map(first)
-        gap = ((ev.dt.year - panel["month_dt"].dt.year) * 12
-               + (ev.dt.month - panel["month_dt"].dt.month))
-        y = ((gap >= 0) & (gap <= 3)).fillna(False).astype(int)
-        panel["event_date"] = ev
+    if dflt.empty:
+        return y
+    d = dflt.copy()
+    d["issuer_code"] = d["symbol"].astype(str).str.extract(r"^([A-Z]+)")[0]
+    d["payment_date"] = pd.to_datetime(d["payment_date"], errors="coerce")
+    first = (d.dropna(subset=["payment_date"])
+             .groupby("issuer_code")["payment_date"].min())
+    ev = panel["issuer_code"].map(first)
+    gap = ((ev.dt.year - panel["month_dt"].dt.year) * 12
+           + (ev.dt.month - panel["month_dt"].dt.month))
+    panel["event_date"] = ev
+    return ((gap >= 0) & (gap <= 3)).fillna(False).astype(int)
+
+
+def _label_from_column(panel, info):
+    """Dataset 2: the label is already in the table, as y_pre3m (or d_DP_RS)."""
+    for col in (info["target"], info["target_fallback"]):
+        if col and col in panel.columns:
+            return pd.to_numeric(panel[col], errors="coerce").fillna(0).astype(int), col
+    raise KeyError(f"no target column found; looked for "
+                   f"{info['target']!r} and {info['target_fallback']!r}")
+
+
+def load_panel(db=None, verbose=True, dataset=None):
+    """Load the active panel, its determinants and its event label.
+
+    ``dataset`` selects the panel explicitly; by default the choice made on the
+    command line (``--dataset N``) is used, which is 1 unless asked otherwise. The
+    return signature is unchanged, so every caller keeps working.
+    """
+    if dataset is not None and dataset != ds.CHOICE:
+        ds.use(dataset)
+    info, table = ds.INFO, ds.TABLE
+    db = db or ds.READ_DB
+    ds.require_db()
+
+    con = sqlite3.connect(db)
+    panel = pd.read_sql(f"SELECT * FROM {table}", con)
+
+    # the 941-firm table keys on `symbol`; give both panels the same key name
+    if "issuer_code" not in panel.columns or panel["issuer_code"].isna().all():
+        if "symbol" not in panel.columns:
+            con.close()
+            raise KeyError(f"{table} has neither issuer_code nor symbol")
+        panel["issuer_code"] = panel["symbol"].astype(str)
+    panel["issuer_code"] = panel["issuer_code"].astype(str)
+    panel["month_dt"] = pd.to_datetime(panel["month"], errors="coerce")
+
+    if info["target"] is None:
+        y, target_name = _label_from_default_register(panel, con), "ibond_default_payment (t..t+3)"
+    else:
+        y, target_name = _label_from_column(panel, info)
+    con.close()
     panel["y"] = y
 
     cols = [c for c in BOND_33 if c in panel.columns]
     X = panel[cols].apply(pd.to_numeric, errors="coerce")
     X = X.fillna(X.median(numeric_only=True)).fillna(0.0)
     if verbose:
-        print(f"  panel {len(panel):,} issuer-months | {panel['issuer_code'].nunique()} "
-              f"issuers | {len(cols)}/{len(BOND_33)} features")
+        print(f"  dataset {ds.CHOICE}: {info['label']}")
+        print(f"  panel {len(panel):,} firm-months | {panel['issuer_code'].nunique()} "
+              f"firms | {len(cols)}/{len(BOND_33)} features")
+        print(f"  target {target_name}")
         print(f"  positives {int(y.sum())} ({y.mean()*100:.2f}%) from "
-              f"{panel.loc[y == 1, 'issuer_code'].nunique()} issuers")
+              f"{panel.loc[y == 1, 'issuer_code'].nunique()} firms")
     return panel, X, y, cols
 
 

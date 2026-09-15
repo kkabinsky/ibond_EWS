@@ -58,6 +58,9 @@ warnings.filterwarnings("ignore")
 
 import cmdf_tree_classify as cl
 import cmdf_tree_models as tm
+import ibond_dataset as ds
+import shock_direction as sdir
+import make_importance_default as mid
 
 OUTDIR = tm.OUTDIR
 DB = tm.DB
@@ -68,6 +71,8 @@ MC = {"XGBoost": "#1f3a5f", "CatBoost": "#a8501a",
       "LightGBM": "#e0a52e", "Random Forest": "#2e7d4f"}
 RIDGE = 1e-3
 SHOCK_SD = 1.0
+SOURCE = sdir.source_from_argv()
+RANK = mid.rank_source_from_argv()
 SHOCK_TOP = 5
 MIN_PAIRS = 200
 SUBSPACE = 8          # determinants kept per model, plus that model's PD
@@ -143,22 +148,18 @@ def main():
     mu = A.mean(0)
     As = (A - mu) / np.where(sd > 0, sd, 1.0)      # standardise once
 
-    imp = pd.read_csv(out("importance_default_event.csv"))
-    piv = imp.pivot_table(index="feature", columns="model", values="gain")
-    order = piv.mean(1).sort_values(ascending=False)
+    order, scores, rank_label = mid.ranking(cols, panel, X, y, RANK)
     idx = {c: i for i, c in enumerate(cols)}
-    shocked_feats = [f for f in order.index if f in idx][:shock_top]
+    shocked_feats = order[:shock_top]
     print(f"\n  determinants shocked: {', '.join(shocked_feats)}")
 
     # adverse direction from a logistic fit, as in the pairwise analysis
-    from sklearn.linear_model import LogisticRegression
-    lg = LogisticRegression(max_iter=5000, C=0.1,
-                            class_weight="balanced").fit(As, y.to_numpy(int))
-    beta = lg.coef_[0]
+    direction = sdir.directions(cols, SOURCE, panel, X, y)
+    print(f"  {sdir.describe(SOURCE)}")
     Ash = As.copy()
     for f in shocked_feats:
         j = idx[f]
-        Ash[:, j] += np.sign(beta[j] if beta[j] != 0 else 1.0) * SHOCK_SD
+        Ash[:, j] += direction[f] * SHOCK_SD
 
     Xn0, Xx0, npair = snapshots(panel, As, cols)
     Xn1, Xx1, _ = snapshots(panel, Ash, cols)
@@ -277,8 +278,8 @@ def main():
                            re_shock=b.real, im_shock=b.imag, mod_shock=abs(b)))
     pd.DataFrame(ev).to_csv(out("koopman_eigenvalues.csv"), index=False)
     res.to_csv(out("koopman_spectrum_summary.csv"), index=False)
-    con = sqlite3.connect(DB)
-    res.to_sql("cmdf_koopman_spectrum", con, if_exists="replace", index=False)
+    con = sqlite3.connect(ds.RESULT_DB)
+    res.to_sql(ds.tname("cmdf_koopman_spectrum"), con, if_exists="replace", index=False)
     con.commit(); con.close()
     print(f"\n  wrote {p}")
     print("  wrote tex_out/koopman_eigenvalues.csv, koopman_spectrum_summary.csv")

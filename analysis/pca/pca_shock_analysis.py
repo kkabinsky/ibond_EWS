@@ -35,10 +35,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from thaibma_paths import DATA_ROOT  # data lives outside the repo
+import ibond_dataset as ds           # which panel: 1 = 293 issuers, 2 = 941 firms
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUTDIR = os.path.join(DATA_ROOT, "tex_out")
-DB = os.path.join(DATA_ROOT, "cmdf_credit.db")
+OUTDIR = ds.OUTDIR
+DB = ds.READ_DB
 os.makedirs(OUTDIR, exist_ok=True)
 
 BETA1 = [1, 2, 3, 4, 5]        # coefficient on ROE
@@ -52,7 +53,8 @@ DE_AMBER, DE_RED = 1.606, 2.116
 
 def load_xy():
     con = sqlite3.connect(DB)
-    d = pd.read_sql("SELECT ROE, DE FROM ibond_33features_panel", con)
+    ds.require_db()
+    d = pd.read_sql(f"SELECT ROE, DE FROM {ds.TABLE}", con)
     con.close()
     d = d.apply(pd.to_numeric, errors="coerce").dropna()
     for c in d.columns:

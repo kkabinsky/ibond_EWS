@@ -44,6 +44,9 @@ warnings.filterwarnings("ignore")
 
 import cmdf_tree_classify as cl
 import cmdf_tree_models as tm
+import ibond_dataset as ds
+import shock_direction as sdir
+import make_importance_default as mid
 
 OUTDIR = tm.OUTDIR
 out = tm.out
@@ -55,6 +58,8 @@ TOP = 11                   # anchor + 10 partners -> C(10,2) = 45 candidate trip
 GRID = 22
 BACKGROUND = 120
 SHOCK_SD = 1.0
+SOURCE = sdir.source_from_argv()
+RANK = mid.rank_source_from_argv()
 SEED = 42
 DPI = 130
 
@@ -75,10 +80,9 @@ def main():
     yv = y.to_numpy(int)
     sd = A.std(0, ddof=1)
 
-    imp = pd.read_csv(out("importance_default_event.csv"))
-    gains = imp.groupby("feature")["gain"].mean().sort_values(ascending=False)
+    order, scores, rank_label = mid.ranking(cols, panel, X, y, RANK)
     idx = {c: i for i, c in enumerate(cols)}
-    ranked = [f for f in gains.index if f in idx]
+    gains, ranked = scores, order
     if ANCHOR not in ranked:
         raise SystemExit(f"{ANCHOR} not in the panel")
     partners = [f for f in ranked if f != ANCHOR][:TOP - 1]
@@ -90,8 +94,8 @@ def main():
     from catboost import CatBoostClassifier
     sc = StandardScaler().fit(A)
     As = sc.transform(A)
-    beta = LogisticRegression(max_iter=5000, C=0.1,
-                              class_weight="balanced").fit(As, yv).coef_[0]
+    direction = sdir.directions(cols, SOURCE, panel, X, y)
+    print(f"  {sdir.describe(SOURCE)}")
     cb = CatBoostClassifier(iterations=300, depth=3, learning_rate=0.05,
                             l2_leaf_reg=3.0, auto_class_weights="Balanced",
                             random_seed=SEED, verbose=0,

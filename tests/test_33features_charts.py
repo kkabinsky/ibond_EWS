@@ -13,7 +13,38 @@ import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use("Agg")
 
-conn = sqlite3.connect("cmdf_credit.db")
+import os
+import unittest
+
+from thaibma_paths import DB as _DB   # resolve the database from anywhere, not the cwd
+
+
+def _require_table(name, hint):
+    """Skip rather than error when an operational table was never produced.
+
+    These tables come from the live iBond pipeline, which needs ThaiBMA
+    credentials. They are deliberately not shipped, so their absence is an unmet
+    prerequisite and not a failure; erroring on import made the whole suite look
+    broken on a clean checkout.
+    """
+    import sqlite3
+    if not os.path.exists(_DB):
+        raise unittest.SkipTest(f"{os.path.basename(_DB)} not present")
+    con = sqlite3.connect(_DB)
+    try:
+        found = con.execute(
+            "SELECT count(1) FROM sqlite_master WHERE name=?", (name,)).fetchone()[0]
+    finally:
+        con.close()
+    if not found:
+        raise unittest.SkipTest(f"{name} not built - {hint}")
+
+
+_require_table("v_ibond_33features_latest",
+                "run: python run.py build_ibond_33features_latest "
+                "(needs the Approach-1 alert table)")
+
+conn = sqlite3.connect(_DB)
 panel = pd.read_sql_query("SELECT * FROM ibond_33features_panel", conn)
 latest = pd.read_sql_query("SELECT * FROM v_ibond_33features_latest", conn)
 conn.close()

@@ -40,11 +40,13 @@ import warnings
 import numpy as np
 import pandas as pd
 from thaibma_paths import DATA_ROOT  # data lives outside the repo
+import ibond_dataset as ds
 
 warnings.filterwarnings("ignore")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DB = os.path.join(DATA_ROOT, "cmdf_credit.db")
+DB = ds.READ_DB
+RESULT_DB = ds.RESULT_DB
 DTA = r"D:\tadgan_gaf\dataset_bond\Rev01_Database_final.dta"
 
 TARGET = "ln_pd12m"

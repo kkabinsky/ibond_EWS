@@ -51,6 +51,9 @@ warnings.filterwarnings("ignore")
 
 import cmdf_tree_classify as cl
 import cmdf_tree_models as tm
+import ibond_dataset as ds
+import shock_direction as sdir
+import make_importance_default as mid
 
 OUTDIR = tm.OUTDIR
 DB = tm.DB
@@ -58,6 +61,8 @@ out = tm.out
 
 TOP = 10
 SHOCK_SD = 1.0
+SOURCE = sdir.source_from_argv()
+RANK = mid.rank_source_from_argv()
 WORKLOAD = 0.02
 SEED = 42
 GRID = 26
@@ -77,10 +82,9 @@ def main():
     yv = y.to_numpy(int)
     sd = A.std(0, ddof=1)
 
-    imp = pd.read_csv(out("importance_default_event.csv"))
-    gains = imp.groupby("feature")["gain"].mean().sort_values(ascending=False)
     idx = {c: i for i, c in enumerate(cols)}
-    chosen = [f for f in gains.index if f in idx][:top]
+    order, gains, rank_label = mid.ranking(cols, panel, X, y, RANK)
+    chosen = order[:top]
     print(f"\n  determinants considered: {', '.join(chosen)}")
     print(f"  combinations: {len(list(itertools.combinations(chosen,3)))} triples, "
           f"{len(list(itertools.combinations(chosen,2)))} pairs, {top} singles")
@@ -97,8 +101,8 @@ def main():
                             random_seed=SEED, verbose=0,
                             allow_writing_files=False).fit(As, yv)
     models = {"Logistic": lg, "CatBoost": cb}
-    beta = lg.coef_[0]
-    direction = {f: (1.0 if beta[idx[f]] >= 0 else -1.0) for f in chosen}
+    direction = sdir.directions(cols, SOURCE, panel, X, y)
+    print(f"  {sdir.describe(SOURCE)}")
 
     def pd_of(m, B):
         return models[m].predict_proba(sc.transform(B))[:, 1]
@@ -182,7 +186,9 @@ def main():
         "item": ["panel", "issuer-months", "issuers", "events", "prevalence",
                  "shock size", "adverse direction", "workload for alarm rate",
                  "surface model", "horizon", "decomposition", "caveat"],
-        "value": ["ibond_33features_panel", f"{len(A):,}",
+        # read from the adapter, not typed in: with two panels a hard-coded name
+        # here silently mislabels which data the workbook was built from
+        "value": [ds.TABLE, f"{len(A):,}",
                   f"{panel['issuer_code'].nunique()}", f"{int(yv.sum())}",
                   f"{yv.mean():.4%}", f"{SHOCK_SD:.0f} standard deviation",
                   "sign of the fitted logistic coefficient",
@@ -287,8 +293,8 @@ def main():
     plt.close(fig)
 
     d.to_csv(out("triple_shock_pd.csv"), index=False)
-    con = sqlite3.connect(DB)
-    d.to_sql("cmdf_triple_shock", con, if_exists="replace", index=False)
+    con = sqlite3.connect(ds.RESULT_DB)
+    d.to_sql(ds.tname("cmdf_triple_shock"), con, if_exists="replace", index=False)
     con.commit(); con.close()
     print(f"  wrote {p}")
     print("  wrote tex_out/triple_shock_pd.csv, table cmdf_triple_shock")

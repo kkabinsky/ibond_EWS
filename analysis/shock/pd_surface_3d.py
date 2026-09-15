@@ -51,6 +51,9 @@ warnings.filterwarnings("ignore")
 
 import cmdf_tree_classify as cl
 import cmdf_tree_models as tm
+import ibond_dataset as ds
+import shock_direction as sdir
+import make_importance_default as mid
 
 OUTDIR = tm.OUTDIR
 out = tm.out
@@ -59,6 +62,8 @@ N_PAIRS = 40
 GRID = 30
 TOP_FEATURES = 10
 SHOCK_SD = 1.0
+SOURCE = sdir.source_from_argv()
+RANK = mid.rank_source_from_argv()
 SHOCK_TOP = 5
 SCORER = "CatBoost"        # highest PR-AUC in the out-of-fold reanalysis
 SEED = 42
@@ -84,23 +89,22 @@ def main():
     As = (A - mu) / np.where(sd > 0, sd, 1.0)
     med = np.median(As, axis=0)
 
-    imp = pd.read_csv(out("importance_default_event.csv"))
-    order = imp.groupby("feature")["gain"].mean().sort_values(ascending=False)
+    order, scores, rank_label = mid.ranking(cols, panel, X, y, RANK)
     idx = {c: i for i, c in enumerate(cols)}
-    feats = [f for f in order.index if f in idx][:TOP_FEATURES]
-    shocked_feats = [f for f in order.index if f in idx][:SHOCK_TOP]
+    feats = order[:TOP_FEATURES]
+    shocked_feats = order[:SHOCK_TOP]
     print(f"\n  plotted : {', '.join(feats)}")
     print(f"  shocked : {', '.join(shocked_feats)}")
 
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
     sc = StandardScaler().fit(A)
-    beta = LogisticRegression(max_iter=5000, C=0.1,
-                              class_weight="balanced").fit(As, yv).coef_[0]
+    direction = sdir.directions(cols, SOURCE, panel, X, y)
+    print(f"  {sdir.describe(SOURCE)}")
     shock_vec = np.zeros(len(cols))
     for f in shocked_feats:
         j = idx[f]
-        shock_vec[j] = np.sign(beta[j] if beta[j] != 0 else 1.0) * SHOCK_SD
+        shock_vec[j] = direction[f] * SHOCK_SD
 
     est = cl.classifiers()[SCORER]()
     est.fit(sc.transform(A), yv)
