@@ -34,17 +34,32 @@ python run.py firm_shock_panel              # การ shock รายบริ
 python run.py pairwise_shock_pd --help      # อาร์กิวเมนต์ส่งผ่านได้ตามปกติ
 ```
 
+### Dataset2 (941 บริษัท)
+
+โฟลเดอร์ `dataset2/` เป็นระบบเดียวกันที่ทำงานบนตาราง `ibond_33features_panel_941firm` (187,007 บริษัท-เดือน, 941 บริษัท) ต้องสร้างฐานข้อมูลด้วย `python dataset/build_db.py` ก่อน
+
+```bash
+python dataset2/app_dataset2.py                 # หน้าจอ Dataset2
+python dataset2/app_dataset2.py --selftest      # ตรวจโดยไม่เปิดหน้าจอ
+python dataset2/leadtime_allmethods.py run      # lead time 1-3 เดือนของ 9 โมเดล
+python dataset2/pd_curves.py build              # PD 3 เดือนของ Approach 1 และ 2
+python run.py pd11_panel performance           # ตารางผลของ 11 วิธี
+```
+
+วิธีติดตั้งและรันทุกโปรแกรมแบบละเอียด พร้อมผลรันจริงบน Dataset2 อยู่ใน [`docs/githup_manual.pdf`](docs/githup_manual.pdf)
+
 ### ข้อมูล
 
 ฐานข้อมูลที่ใช้งานจริงมีขนาด 375 MB และมี 155 ตาราง ซึ่งส่วนใหญ่เป็นตารางปฏิบัติการ เช่น log การส่งอีเมล คิวแจ้งเตือน และผลลัพธ์ระหว่างทาง ทั้งหมดนั้นไม่ได้อยู่ในคลังนี้ และ GitHub ก็ไม่รับไฟล์เดี่ยวที่เกิน 100 MB อยู่แล้ว
 
-สิ่งที่งานวิจัยอ่านจริงมีสามตาราง แนบมาเป็น CSV บีบอัดรวม **1.4 MB** ในโฟลเดอร์ `dataset/`
+สิ่งที่งานวิจัยอ่านจริงมีสี่ตาราง แนบมาเป็น CSV บีบอัดรวม **18.7 MB** ในโฟลเดอร์ `dataset/`
 
 | ตาราง | แถว | เนื้อหา |
 |---|---|---|
 | `ibond_33features_panel` | 16,986 | แผงเดือน-บริษัท 293 ผู้ออก ตัวแปร 33 ตัว ช่วง 2007-11 ถึง 2026-08 |
 | `ibond_issuer` | 677 | ทะเบียนผู้ออกตราสาร |
 | `ibond_default_payment` | 50 | เหตุการณ์ไม่ชำระที่บันทึกไว้ พร้อมลิงก์ประกาศของ ThaiBMA |
+| `ibond_33features_panel_941firm` | 187,007 | Dataset2: แผงเดือน-บริษัท 941 บริษัท SET และ mai ช่วง 1984-01 ถึง 2026-08 ใช้โดยโฟลเดอร์ `dataset2/` |
 
 สร้างฐานข้อมูลกลับคืนด้วยคำสั่งเดียว
 
@@ -52,7 +67,7 @@ python run.py pairwise_shock_pd --help      # อาร์กิวเมนต�
 python dataset/build_db.py
 ```
 
-ได้ไฟล์ `cmdf_credit.db` ขนาด 7.7 MB ที่โปรแกรมหาเจอเอง ตรวจแล้วว่าให้ผลตรงกับฐานข้อมูลเต็มทุกตัวเลข ทั้งจำนวนผู้ออก 293 ราย สถานะ HIGH RISK 15 ราย และเส้นเตือนภัย 0.026881
+ได้ไฟล์ `cmdf_credit.db` ขนาด 109.5 MB ที่โปรแกรมหาเจอเอง (ตาราง Dataset2 ได้ค่ากลับมาครบทุกบิต) รันเมื่อ 26 ก.ย. 2026 ด้วยตัวแปร 30 ตัว ได้ผู้ออก 293 ราย สถานะ HIGH RISK 15 ราย และเส้นเตือนภัย 0.066002 ส่วนรุ่นก่อนที่ยังใช้ 33 ตัวแปรได้เส้นเตือนภัย 0.026881
 
 แท็บใน GUI ที่อ่านตารางปฏิบัติการ เช่น ประวัติการส่งอีเมล จะไม่มีข้อมูลแสดง เพราะตารางเหล่านั้นไม่ได้แนบมา ส่วนสคริปต์วิเคราะห์ทั้งหมดไม่ได้ใช้ตารางพวกนั้น
 
@@ -81,7 +96,7 @@ thaibma/
 ├── dataset/             ข้อมูลสามตาราง (csv.gz) + build_db.py สร้าง DB กลับคืน
 ├── app/                   7 ไฟล์
 ├── app/legacy/            7 ไฟล์
-├── ews/                  14 ไฟล์
+├── ews/                  16 ไฟล์
 ├── models/               17 ไฟล์
 ├── analysis/shock/        6 ไฟล์
 ├── analysis/pca/          5 ไฟล์
@@ -92,11 +107,13 @@ thaibma/
 ├── bench/                 4 ไฟล์
 ├── integrations/          3 ไฟล์
 ├── tests/                11 ไฟล์
+├── dataset2/              6 ไฟล์  ระบบเดียวกันบน Dataset2 (941 บริษัท)
+├── docs/                 คู่มือติดตั้งและวิธีรัน (githup_manual.pdf)
 ```
 
 ---
 
-## คู่มือ: โปรแกรมแต่ละตัวทำอะไร (115 ไฟล์)
+## คู่มือ: โปรแกรมแต่ละตัวทำอะไร (123 ไฟล์)
 
 คำอธิบายในตารางดึงมาจาก docstring ของแต่ละไฟล์โดยตรง ช่องที่ว่างคือไฟล์ที่ยังไม่มี docstring
 
@@ -140,8 +157,10 @@ thaibma/
 | `baselines.py` | anomaly scoring of the factor panel with the eight baseline detectors requested in the ExpoGAF-AnoNet review… |
 | `bond_ews.py` | Approach 1 (discrete-time survival hazard) applied directly to the iBond corporate-bond data |
 | `bond_ews_xgb.py` | Corporate Bond Early Warning System (Approach 2 — Machine Learning XGBoost Survival Hazard) |
+| `a_approach.py` | "วิธี A": a three-layer review queue that catches the issuers a single PD cut-off misses |
 | `firm_shock_panel.py` | per-issuer shock and threshold diagnostics for the GUI |
 | `hyperbolic_boundary_panel.py` | momentum and the hyperbolic decision boundary on the real iBond panel, as a command-line tool and as a panel inside app.py |
+| `lime_panel.py` | Firm-level XAI for the CatBoost model used by ``firm_shock_panel`` |
 | `lead_metrics.py` | Shared lead-time definitions for the CMDF credit app |
 | `machine_survior.py` | Logistic vs XGBoost as the Approach-1 hazard estimator |
 | `pd_threshold_monitor.py` | derive monitoring thresholds on determinant pairs from the shock analysis, so an issuer can be checked against a stated PD ceiling |
@@ -284,11 +303,22 @@ thaibma/
 | `test_thai.py` |  |
 | `test_xgb_calibration.py` | test_xgb_calibration.py ================================================================================ Tests Platt scaling probability… |
 
+### `dataset2` — ระบบเดียวกันบน Dataset2 (941 บริษัท) อ่านตาราง `ibond_33features_panel_941firm`
+
+| โปรแกรม | ทำอะไร |
+|---|---|
+| `app_dataset2.py` | ThaiBMA Credit Early Warning System — Dataset2 edition |
+| `data_layer.py` | Dataset2 data layer for app_dataset2.py |
+| `leadtime_allmethods.py` | Standalone Dataset2 database and lead-time pipeline |
+| `make_pr_figure.py` | Three-panel PR-AUC figure for every method, in one picture |
+| `pd_curves.py` | กราฟ PD 3 เดือน เทียบ Approach 1 กับ Approach 2 บน Dataset2 |
+| `run_all_methods.py` | Run every classifier on Dataset2 and write the tables the manual uses |
+
 ---
 
 ## ข้อควรทราบเกี่ยวกับผลลัพธ์
 
-ตัวเลขต่อไปนี้มาจากการรันจริงบนแผง 16,986 แถว ผู้ออก 293 ราย และควรอ่านพร้อมข้อจำกัด
+ตัวเลขต่อไปนี้มาจากการรันจริงบนแผง 16,986 แถว ผู้ออก 293 ราย และควรอ่านพร้อมข้อจำกัด (คำนวณเมื่อ ส.ค. 2026 ขณะที่โมเดลยังใช้ตัวแปร 33 ตัว)
 
 - **เหตุการณ์ผิดนัดมีเพียง 32 เดือนจากผู้ออก 8 ราย** คิดเป็น 0.19% ของแถวทั้งหมด ตัวเลขความแม่นยำใด ๆ บนฐานนี้ต้องอ่านอย่างระวัง
 - **สถานะ HIGH RISK ไม่ได้แปลว่าจะผิดนัด** ที่กำลังคน 5% มี 15 รายอยู่เหนือเส้น แต่ทั้งฐานข้อมูลมีผู้ออกที่เคยเกิดเหตุการณ์จริงแค่ 8 ราย

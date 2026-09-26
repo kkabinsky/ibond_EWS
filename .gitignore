@@ -60,3 +60,7 @@ desktop.ini
 *.bak
 _codex_backup/
 tmp/
+
+# ---- manual: the PDF and its figures are published on purpose -------------
+!docs/githup_manual.pdf
+!docs/githup_manual_figs/*.jpg

@@ -57,9 +57,25 @@ def out(name):
     return os.path.join(OUTDIR, name)
 
 
+# 30 determinants for the TREE models.
+#
+# The panel ships four columns for one liquidity quantity:
+#     amihud_monthly_100 = 100 x amihud_monthly   (correlation 1.0000000000)
+#     scaled_amihud      = amihud_monthly_100     (identical on every row)
+#     ln_amihud          = log(amihud_monthly x 100)
+# All three are dropped here. A tree splits on order, and neither a constant multiple
+# nor a log changes the order, so the fitted function is unchanged -- but the gain that
+# belongs to one quantity was being divided four ways, which made each share look small
+# and pushed the real liquidity signal down the importance table.
+#
+# adj_illiq_kz stays: it is ln(amihud) x (1 + zero-trading share), so it carries the
+# zero-day information none of the others do. It is a different measure, not a rescaling.
+#
+# load_bond.BOND_FEATURES keeps ln_amihud and so has 31. That path fits a logistic
+# hazard, where the log is genuinely a different regressor. The difference between the
+# two lists is deliberate and documented in both files.
 BOND_33 = [
-    "amihud_monthly", "amihud_monthly_100", "adj_illiq_kz", "scaled_amihud",
-    "ln_amihud", "percent_zero_days", "zero_days", "n_days",
+    "amihud_monthly", "adj_illiq_kz", "percent_zero_days", "zero_days", "n_days",
     "ROA", "ROE", "DE", "CurrentRatio", "QuickRatio", "CashRatio",
     "EBITtoTA", "REtoTA", "WorkingCapitaltoTA", "TDTA", "LTDtoTA", "STDtoTA",
     "cf_Interestcoverageratio", "acc_DebtServiceCoverageRatio",

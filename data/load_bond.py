@@ -14,11 +14,26 @@ import pandas as pd
 
 BOND_DTA = r"D:\tadgan_gaf\dataset_bond\Rev01_Database_final.dta"
 
-# 33 real features — NO Merton internals (dd/pd/a/sa are held out for the target)
+# 31 real features — NO Merton internals (dd/pd/a/sa are held out for the target)
+#
+# WHY 31 HERE AND 30 IN cmdf_tree_classify.BOND_33
+#   The panel ships four columns for one quantity:
+#       amihud_monthly_100 = 100 x amihud_monthly   (correlation 1.0000000000)
+#       scaled_amihud      = amihud_monthly_100     (identical on every row)
+#       ln_amihud          = log(amihud_monthly x 100)
+#   Both amihud_monthly_100 and scaled_amihud are dropped everywhere: they are exact
+#   rescalings and carry nothing. Fitting all three split one coefficient three ways,
+#   which is visible in the old hazard ratios -- all three came out at 0.9093.
+#
+#   ln_amihud is dropped for the TREE models, where a monotone transform cannot change
+#   a split, but KEPT here. This path fits a logistic hazard, and there the log is not
+#   redundant: raw Amihud is extremely skewed, and the log had hazard ratio 2.1386
+#   against 0.9093 for the raw column. Removing it cost AUC 0.8371 -> 0.8245 on the
+#   only fold with enough events (25) to be worth reading.
 BOND_FEATURES = [
-    # liquidity (8)
-    "amihud_monthly", "amihud_monthly_100", "adj_illiq_kz", "scaled_amihud",
-    "ln_amihud", "percent_zero_days", "zero_days", "n_days",
+    # liquidity (6)
+    "amihud_monthly", "ln_amihud", "adj_illiq_kz",
+    "percent_zero_days", "zero_days", "n_days",
     # financial ratios (14)
     "ROA", "ROE", "DE", "CurrentRatio", "QuickRatio", "CashRatio",
     "EBITtoTA", "REtoTA", "WorkingCapitaltoTA", "TDTA", "LTDtoTA", "STDtoTA",
@@ -31,7 +46,7 @@ BOND_FEATURES = [
     "ESGScore", "GovernancePillarScore", "EnvironmentalPillarScore",
     "SocialPillarScore", "IndependentBoardMembers", "AverageBoardTenure",
 ]
-assert len(BOND_FEATURES) == 33
+assert len(BOND_FEATURES) == 31
 
 BOND_ID = "firm_id"
 HORIZON = 3                   # forward window (months) for the early-warning label

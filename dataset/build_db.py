@@ -8,14 +8,17 @@ WHY THE DATABASE IS NOT IN THE REPOSITORY
     that belongs in a public repository, and GitHub rejects any single file above
     100 MB in any case.
 
-    What the published research actually reads is three tables. They are shipped here
-    as gzipped CSV, 1.4 MB in total, and this script turns them back into the SQLite
+    What the published research actually reads is four tables. They are shipped here
+    as gzipped CSV, 18.7 MB in total, and this script turns them back into the SQLite
     file the code expects.
 
 WHAT YOU GET
     ibond_33features_panel   16,986 issuer-months, 293 issuers, 2007-11 to 2026-08
     ibond_issuer                677 issuer records
     ibond_default_payment        50 recorded non-payment events
+    ibond_33features_panel_941firm
+                            187,007 issuer-months, 941 SET/mai firms, 1984-01 to
+                                    2026-08 (Dataset2, read by dataset2/)
 
     That is enough to reproduce every figure and table in the report: the out-of-fold
     PD path, the review-capacity threshold, the shock ladder, the pairwise and triple
@@ -47,6 +50,7 @@ TABLES = {
     "ibond_33features_panel": "ibond_33features_panel.csv.gz",
     "ibond_issuer": "ibond_issuer.csv.gz",
     "ibond_default_payment": "ibond_default_payment.csv.gz",
+    "ibond_33features_panel_941firm": "ibond_33features_panel_941firm.csv.gz",
 }
 
 
@@ -72,10 +76,11 @@ def main():
     for table, fname in TABLES.items():
         with gzip.open(os.path.join(HERE, fname), "rt", encoding="utf-8") as fh:
             # low_memory=False: event_date and event_month mix blanks with dates,
-            # and chunked inference would type them differently per chunk
-            df = pd.read_csv(fh, low_memory=False)
+            # and chunked inference would type them differently per chunk;
+            # round_trip parsing gives back every float bit for bit
+            df = pd.read_csv(fh, low_memory=False, float_precision="round_trip")
         df.to_sql(table, con, if_exists="replace", index=False)
-        print(f"  {table:26s} {len(df):>7,} rows, {len(df.columns):>3} columns")
+        print(f"  {table:30s} {len(df):>7,} rows, {len(df.columns):>3} columns")
     con.commit()
     con.close()
 
